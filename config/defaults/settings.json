@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "appearance": {
+    "theme": "dark",
+    "accent": "#8bd5ca",
+    "reducedMotion": false,
+    "wallpaper": ""
+  },
+  "launcher": {
+    "shortcut": "Super+Space",
+    "showRecents": false,
+    "favorites": []
+  },
+  "spaces": {
+    "count": 9,
+    "animationDuration": 200
+  },
+  "windows": {
+    "focusMode": "click",
+    "raiseOnFocus": true
+  },
+  "plugins": {
+    "dev.phasor.launcher": {
+      "enabled": true
+    }
+  }
+}

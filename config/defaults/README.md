@@ -1,0 +1,1 @@
+Default settings and compositor configuration are shipped with the source. User settings are copied only when missing; the Mango profile is launched directly from the Phasor tree and never replaces a user's normal Mango config.

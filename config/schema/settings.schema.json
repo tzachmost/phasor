@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phasor.dev/schema/settings-v1.json",
+  "title": "Phasor settings",
+  "type": "object",
+  "required": ["schemaVersion", "appearance", "launcher", "spaces", "windows", "plugins"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "appearance": {
+      "type": "object",
+      "properties": {
+        "theme": { "enum": ["dark", "light", "system"] },
+        "accent": { "type": "string" },
+        "reducedMotion": { "type": "boolean" },
+        "wallpaper": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "launcher": {
+      "type": "object",
+      "properties": {
+        "shortcut": { "type": "string" },
+        "showRecents": { "type": "boolean" },
+        "favorites": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "spaces": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "animationDuration": { "type": "integer", "minimum": 0, "maximum": 2000 }
+      },
+      "additionalProperties": false
+    },
+    "windows": {
+      "type": "object",
+      "properties": {
+        "focusMode": { "enum": ["click", "sloppy"] },
+        "raiseOnFocus": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "plugins": { "type": "object", "additionalProperties": { "type": "object" } }
+  },
+  "additionalProperties": false
+}

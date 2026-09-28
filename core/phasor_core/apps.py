@@ -1,0 +1,154 @@
+"""Desktop application discovery and safe launch support."""
+
+from __future__ import annotations
+
+import configparser
+import os
+import shlex
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+
+def application_dirs() -> list[Path]:
+    dirs = [Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")).expanduser() / "applications"]
+    dirs.extend(Path(path).expanduser() / "applications" for path in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":"))
+    return dirs
+
+
+def _truth(value: str | None) -> bool:
+    return (value or "").strip().lower() == "true"
+
+
+class AppsService:
+    def __init__(self) -> None:
+        self._cache: list[dict[str, Any]] | None = None
+
+    def list(self) -> list[dict[str, Any]]:
+        if self._cache is not None:
+            return self._cache
+        entries: dict[str, dict[str, Any]] = {}
+        for directory in application_dirs():
+            if not directory.is_dir():
+                continue
+            for path in directory.rglob("*.desktop"):
+                if any(part.startswith(".") for part in path.relative_to(directory).parts):
+                    continue
+                config = configparser.ConfigParser(interpolation=None, strict=False)
+                config.optionxform = str
+                try:
+                    config.read(path, encoding="utf-8")
+                    item = config["Desktop Entry"]
+                except (OSError, KeyError, configparser.Error):
+                    continue
+                if item.get("Type", "Application") != "Application" or _truth(item.get("NoDisplay")) or _truth(item.get("Hidden")):
+                    continue
+                name = item.get("Name", "").strip()
+                command = item.get("Exec", "").strip()
+                if not name or not command:
+                    continue
+                try_exec = item.get("TryExec", "").strip()
+                if try_exec and shutil.which(try_exec) is None and not Path(try_exec).is_file():
+                    continue
+                app_id = path.name[:-8]
+                entries.setdefault(app_id, {
+                    "id": app_id,
+                    "name": name,
+                    "genericName": item.get("GenericName", ""),
+                    "comment": item.get("Comment", ""),
+                    "icon": item.get("Icon", ""),
+                    "desktopFile": str(path),
+                    "exec": command,
+                    "terminal": _truth(item.get("Terminal")),
+                })
+        self._cache = sorted(entries.values(), key=lambda row: row["name"].casefold())
+        return self._cache
+
+    def search(self, query: str, limit: int = 50, favorites: list[str] | None = None) -> dict[str, Any]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValueError("application search limit must be from 1 to 200")
+        needle = query.strip().casefold()
+        entries = self.list()
+        favorite_ids = set(favorites or [])
+        if not needle:
+            items = [{**app, "favorite": app["id"] in favorite_ids} for app in entries]
+            items.sort(key=lambda app: (not app["favorite"], app["name"].casefold()))
+            return {"items": items[:limit], "total": len(items)}
+        ranked = []
+        for app in entries:
+            name = app["name"].casefold()
+            generic = app["genericName"].casefold()
+            comment = app["comment"].casefold()
+            app_id = app["id"].casefold()
+            if needle in name or needle in generic or needle in comment or needle in app_id:
+                score = (not (app["id"] in favorite_ids), 0 if name.startswith(needle) else 1, name.find(needle) if needle in name else 99, name)
+                ranked.append((score, {**app, "favorite": app["id"] in favorite_ids}))
+        ranked.sort(key=lambda item: item[0])
+        return {"items": [app for _, app in ranked[:limit]], "total": len(ranked)}
+
+    def favorite(self, app_id: str, enabled: bool) -> dict[str, Any]:
+        if not isinstance(enabled, bool):
+            raise ValueError("favorite enabled must be a boolean")
+        if not any(row["id"] == app_id for row in self.list()):
+            raise ValueError(f"Unknown application id: {app_id}")
+        from .config import load_settings, save_settings
+        settings = load_settings()
+        launcher = settings.setdefault("launcher", {})
+        favorites = list(launcher.get("favorites", []))
+        if enabled and app_id not in favorites:
+            favorites.append(app_id)
+        if not enabled:
+            favorites = [item for item in favorites if item != app_id]
+        launcher["favorites"] = favorites
+        save_settings(settings)
+        return {"id": app_id, "favorite": enabled}
+
+    def open_store(self, app_id: str) -> dict[str, Any]:
+        if not any(row["id"] == app_id for row in self.list()):
+            raise ValueError(f"Unknown application id: {app_id}")
+        executable = shutil.which("xdg-open")
+        if not executable:
+            raise ValueError("xdg-open is not installed")
+        import urllib.parse
+        url = "appstream://" + urllib.parse.quote(app_id, safe=".-_")
+        subprocess.Popen([executable, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return {"openedStore": app_id}
+
+    def launch(self, app_id: str) -> dict[str, Any]:
+        app = next((row for row in self.list() if row["id"] == app_id), None)
+        if app is None:
+            raise ValueError(f"Unknown application id: {app_id}")
+        if app["terminal"]:
+            raise ValueError("Terminal desktop entries are not launched until a terminal integration is configured")
+        argv = desktop_exec_argv(app["exec"], app["name"], app["desktopFile"], app["icon"])
+        if not argv:
+            raise ValueError(f"Desktop entry has no runnable command: {app_id}")
+        try:
+            subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            raise ValueError(f"Could not launch {app['name']}: {exc}") from exc
+        return {"launched": app_id, "name": app["name"]}
+
+
+def desktop_exec_argv(command: str, name: str, desktop_file: str, icon: str) -> list[str]:
+    """Expand the safe subset of the Desktop Entry Exec field codes."""
+    tokens = shlex.split(command, posix=True)
+    argv: list[str] = []
+    for token in tokens:
+        if token == "%i":
+            if icon:
+                argv.extend(["--icon", icon])
+            continue
+        if token in {"%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%v", "%m"}:
+            continue
+        token = token.replace("%%", "\0")
+        token = token.replace("%c", name).replace("%k", desktop_file)
+        token = token.replace("\0", "%")
+        # Field codes may also appear inside an argument. File/URI codes have no
+        # input in the launcher and are removed, as required for this use case.
+        for code in ("%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%v", "%m", "%i"):
+            token = token.replace(code, "")
+        if token:
+            argv.append(token)
+    return argv
