@@ -35,6 +35,8 @@ cd ~/Work/phasor && git pull && ./scripts/install-dev
 
 See [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/roadmap.md) for implementation details. User settings live in `~/.config/phasor/`, persistent data in `~/.local/share/phasor/`, and caches in `~/.cache/phasor/`.
 
+For a new work session, start with [docs/handoff.md](docs/handoff.md) for the current state, completed work, validation limits, and suggested next steps.
+
 ## Current scope
 
 v0.1 establishes the Phasor session, wallpaper, the service boundary, Mango spaces/windows operations, an app/file launcher plugin, diagnostics, and plugin discovery/lifecycle. The core exposes Space state and controls, though an in-shell Space indicator is still planned. File actions currently cover open, reveal, and copy path; rename, delete, share, and copy-file actions are not implemented. MangoWM and Quickshell must be installed on the target system. Full session validation is reserved for a fresh CachyOS install.
