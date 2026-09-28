@@ -1,0 +1,59 @@
+pkgname=phasor-shell-git
+pkgver=r1.0
+pkgrel=1
+pkgdesc='Portable Quickshell desktop shell for MangoWM'
+arch=('any')
+url='https://github.com/tzachmost/phasor'
+license=('MIT')
+depends=('mangowm-git' 'quickshell' 'python' 'xdg-utils' 'wl-clipboard' 'swaybg')
+optdepends=(
+  'playerctl: MPRIS controls'
+  'cliphist: clipboard history backend'
+  'swaync: temporary notification UI'
+  'flameshot: screenshot tool'
+  'nautilus: reveal files in the default file manager'
+  'brightnessctl: brightness controls'
+  'wireplumber: audio controls via wpctl'
+  'networkmanager: network status and Wi-Fi controls'
+  'bluez: Bluetooth status and power controls'
+  'polkit-gnome: authentication agent'
+)
+makedepends=('git')
+provides=('phasor-shell')
+conflicts=('phasor-shell')
+source=("git+https://github.com/tzachmost/phasor.git#branch=main")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/phasor"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+package() {
+  cd "$srcdir/phasor"
+  local dest="$pkgdir/usr/share/phasor"
+  install -d "$dest"
+  tar -c --exclude='__pycache__' --exclude='*.py[co]' --exclude='*.egg-info' \
+    -f - README.md AGENTS.md LICENSE shell plugins core config session scripts docs |
+    tar -x -f - -C "$dest"
+  printf 'Managed by the Phasor Arch package.\n' > "$dest/.phasor-managed"
+  chmod 644 "$dest/.phasor-managed"
+  find "$dest" -type f ! -name '.phasor-managed' ! -name '.phasor-owned-files' -printf '%P\n' > "$dest/.phasor-owned-files"
+  chmod 644 "$dest/.phasor-owned-files"
+  ln -s /usr/share/phasor/scripts/phasorctl "$pkgdir/usr/bin/phasorctl"
+  ln -s /usr/share/phasor/scripts/phasor-core "$pkgdir/usr/bin/phasor-core"
+  ln -s /usr/share/phasor/scripts/phasor-doctor "$pkgdir/usr/bin/phasor-doctor"
+  ln -s /usr/share/phasor/session/phasor-session "$pkgdir/usr/bin/phasor-session"
+  install -d "$pkgdir/usr/share/wayland-sessions"
+  cat > "$pkgdir/usr/share/wayland-sessions/phasor.desktop" <<'EOF'
+[Desktop Entry]
+Name=Phasor
+Comment=Phasor Shell on MangoWM
+Exec=/usr/bin/phasor-session
+TryExec=/usr/bin/phasor-session
+Type=Application
+DesktopNames=Phasor;Mango;
+X-Phasor-Managed=true
+EOF
+  chmod 644 "$pkgdir/usr/share/wayland-sessions/phasor.desktop"
+}

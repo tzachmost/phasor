@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+BIN_DIR="${HOME}/.local/bin"
+SESSION_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wayland-sessions"
+PHASOR_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/phasor"
+PHASOR_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/phasor"
+PHASOR_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/phasor"
+
+mkdir -p "$BIN_DIR" "$SESSION_DIR" "$PHASOR_CONFIG" "$PHASOR_DATA/plugins" "$PHASOR_STATE"
+
+link_owned() {
+    local source="$1" target="$2"
+    if [[ -L "$target" ]]; then
+        if [[ "$(readlink -f "$target")" == "$(readlink -f "$source")" ]]; then return 0; fi
+        printf 'Refusing to replace a symlink not owned by this checkout: %s\n' "$target" >&2
+        return 1
+    elif [[ -e "$target" ]]; then
+        printf 'Refusing to replace existing non-Phasor path: %s\n' "$target" >&2
+        return 1
+    fi
+    ln -s "$source" "$target"
+}
+
+for name in phasorctl phasor-core phasor-doctor; do
+    link_owned "$ROOT/scripts/$name" "$BIN_DIR/$name"
+done
+link_owned "$ROOT/session/phasor-session" "$BIN_DIR/phasor-session"
+
+if [[ -L "$PHASOR_CONFIG/settings.json" && ! -e "$PHASOR_CONFIG/settings.json" ]]; then
+    printf 'Refusing to initialize settings through a broken symlink: %s\n' "$PHASOR_CONFIG/settings.json" >&2
+    exit 1
+elif [[ -e "$PHASOR_CONFIG/settings.json" && ! -f "$PHASOR_CONFIG/settings.json" ]]; then
+    printf 'Settings path exists and is not a regular file: %s\n' "$PHASOR_CONFIG/settings.json" >&2
+    exit 1
+elif [[ ! -e "$PHASOR_CONFIG/settings.json" && ! -L "$PHASOR_CONFIG/settings.json" ]]; then
+    install -m 600 "$ROOT/config/defaults/settings.json" "$PHASOR_CONFIG/settings.json"
+fi
+
+SESSION_FILE="$SESSION_DIR/phasor.desktop"
+if [[ -e "$SESSION_FILE" || -L "$SESSION_FILE" ]]; then
+    if [[ -L "$SESSION_FILE" || ! -f "$SESSION_FILE" ]] || ! grep -q '^X-Phasor-Managed=true$' "$SESSION_FILE"; then
+        printf 'Refusing to replace an existing session entry not marked as Phasor-managed: %s\n' "$SESSION_FILE" >&2
+        exit 1
+    fi
+fi
+PHASOR_SESSION_PATH="$ROOT/session/phasor-session" python3 - "$SESSION_FILE" <<'PY'
+import os, sys
+path = os.environ["PHASOR_SESSION_PATH"]
+exec_path = '"' + path.replace("\\", "\\\\").replace('"', '\\"').replace(" ", "\\s") + '"'
+contents = """[Desktop Entry]
+Name=Phasor
+Comment=Phasor Shell on MangoWM
+Exec={exec_path}
+TryExec={exec_path}
+Type=Application
+DesktopNames=Phasor;Mango;
+X-Phasor-Managed=true
+""".format(exec_path=exec_path)
+with open(sys.argv[1], "w", encoding="utf-8") as stream:
+    stream.write(contents)
+PY
+
+printf 'Phasor development files linked from %s\n' "$ROOT"
+printf 'Select Phasor from the login session selector, or run %s/scripts/dev-run inside a TTY.\n' "$ROOT"

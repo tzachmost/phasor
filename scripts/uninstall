@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SYSTEM=0
+if [[ "${1:-}" == "--system" ]]; then SYSTEM=1; fi
+
+if (( SYSTEM )); then
+    if (( EUID != 0 )); then printf 'Run --system uninstall as root.\n' >&2; exit 1; fi
+    DEST=/usr/share/phasor
+    if [[ ! -f "$DEST/.phasor-managed" || -L "$DEST/.phasor-managed" || ! -f "$DEST/.phasor-owned-files" || -L "$DEST/.phasor-owned-files" ]]; then
+        printf 'Refusing to remove an unmanaged or untracked system directory at %s.\n' "$DEST" >&2
+        exit 1
+    fi
+    for name in phasorctl phasor-core phasor-doctor phasor-session; do
+        target="/usr/bin/$name"
+        source="$DEST/scripts/$name"
+        [[ "$name" != phasor-session ]] || source="$DEST/session/phasor-session"
+        if [[ -L "$target" && "$(readlink -f "$target")" == "$source" ]]; then rm -- "$target"; fi
+    done
+    if [[ -f /usr/share/wayland-sessions/phasor.desktop && ! -L /usr/share/wayland-sessions/phasor.desktop ]] && grep -q '^X-Phasor-Managed=true$' /usr/share/wayland-sessions/phasor.desktop; then
+        rm -f /usr/share/wayland-sessions/phasor.desktop
+    fi
+    while IFS= read -r owned_path; do
+        case "$owned_path" in
+            /*|..|../*|*/../*|*/..)
+                printf 'Skipping invalid managed path in ownership list: %s\n' "$owned_path" >&2
+                continue
+                ;;
+        esac
+        target="$DEST/$owned_path"
+        resolved="$(realpath -m -- "$target")"
+        case "$resolved" in
+            "$DEST"/*) ;;
+            *) printf 'Skipping managed path that resolves outside %s: %s\n' "$DEST" "$owned_path" >&2; continue ;;
+        esac
+        if [[ -e "$target" || -L "$target" ]]; then rm -f -- "$target"; fi
+        parent="$(dirname "$target")"
+        while [[ "$parent" == "$DEST"/* ]]; do
+            rmdir -- "$parent" 2>/dev/null || break
+            parent="$(dirname "$parent")"
+        done
+    done < "$DEST/.phasor-owned-files"
+    rm -f "$DEST/.phasor-owned-files"
+    remaining="$(find "$DEST" -mindepth 1 -maxdepth 1 ! -name '.phasor-managed' -print -quit)"
+    if [[ -z "$remaining" ]]; then
+        rm -f "$DEST/.phasor-managed"
+        rmdir "$DEST"
+        printf 'Removed the system Phasor files. User settings and data were kept.\n'
+    else
+        printf 'Removed Phasor-managed files and kept the managed directory because it still contains unowned content: %s\n' "$remaining"
+    fi
+    exit 0
+fi
+
+BIN_DIR="${HOME}/.local/bin"
+SESSION_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wayland-sessions"
+for name in phasorctl phasor-core phasor-doctor phasor-session; do
+    candidate="$BIN_DIR/$name"
+    if [[ -L "$candidate" && "$(readlink -f "$candidate")" == "$ROOT/"* ]]; then rm -- "$candidate"; fi
+done
+session_file="$SESSION_DIR/phasor.desktop"
+if [[ -f "$session_file" && ! -L "$session_file" ]] && grep -q '^X-Phasor-Managed=true$' "$session_file"; then rm -- "$session_file"; fi
+printf 'Removed Phasor development links and session entry. User settings, plugin data, and caches were kept.\n'

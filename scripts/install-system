@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if (( EUID != 0 )); then
+    printf 'Run this system installer as root (for example: sudo %s).\n' "$0" >&2
+    exit 1
+fi
+
+DEST=/usr/share/phasor
+if [[ -L "$DEST" || ( -e "$DEST" && ( ! -f "$DEST/.phasor-managed" || -L "$DEST/.phasor-managed" ) ) ]]; then
+    printf 'Refusing to replace an existing unmanaged Phasor directory: %s\n' "$DEST" >&2
+    exit 1
+fi
+if [[ -d "$DEST" ]]; then
+    symlink="$(find "$DEST" -type l -print -quit)"
+    if [[ -n "$symlink" ]]; then
+        printf 'Refusing to update a Phasor tree containing a symlink: %s\n' "$symlink" >&2
+        exit 1
+    fi
+    if [[ -L "$DEST/.phasor-owned-files" || ( -e "$DEST/.phasor-owned-files" && ! -f "$DEST/.phasor-owned-files" ) ]]; then
+        printf 'Refusing to replace an invalid ownership list under %s.\n' "$DEST" >&2
+        exit 1
+    fi
+fi
+for name in phasorctl phasor-core phasor-doctor phasor-session; do
+    target="/usr/bin/$name"
+    source="$DEST/scripts/$name"
+    if [[ -e "$target" || -L "$target" ]]; then
+        if [[ ! -L "$target" || "$(readlink -f "$target")" != "$source" ]]; then
+            printf 'Refusing to replace an existing unmanaged command: %s\n' "$target" >&2
+            exit 1
+        fi
+    fi
+done
+SESSION_ENTRY=/usr/share/wayland-sessions/phasor.desktop
+if [[ -e "$SESSION_ENTRY" || -L "$SESSION_ENTRY" ]]; then
+    if [[ -L "$SESSION_ENTRY" || ! -f "$SESSION_ENTRY" ]] || ! grep -q '^X-Phasor-Managed=true$' "$SESSION_ENTRY"; then
+        printf 'Refusing to replace an existing session entry not marked as Phasor-managed: %s\n' "$SESSION_ENTRY" >&2
+        exit 1
+    fi
+fi
+install -d "$DEST"
+tar -c --exclude='__pycache__' --exclude='*.py[co]' --exclude='*.egg-info' \
+    -f - -C "$ROOT" README.md AGENTS.md LICENSE shell plugins core config session scripts docs |
+    tar -x --no-same-owner -f - -C "$DEST"
+printf 'Managed by Phasor system installer.\n' > "$DEST/.phasor-managed"
+chmod 644 "$DEST/.phasor-managed"
+{
+    printf '%s\n' README.md AGENTS.md LICENSE
+    for directory in shell plugins core config session scripts docs; do
+        while IFS= read -r -d '' source_file; do
+            printf '%s\n' "${source_file#"$ROOT"/}"
+        done < <(find "$ROOT/$directory" -type f ! -path '*/__pycache__/*' ! -name '*.py[co]' ! -name '*.egg-info' -print0)
+    done
+} > "$DEST/.phasor-owned-files"
+chmod 644 "$DEST/.phasor-owned-files"
+for name in phasorctl phasor-core phasor-doctor; do
+    target="/usr/bin/$name"
+    [[ -L "$target" ]] || ln -s "$DEST/scripts/$name" "$target"
+done
+[[ -L /usr/bin/phasor-session ]] || ln -s "$DEST/session/phasor-session" /usr/bin/phasor-session
+install -d /usr/share/wayland-sessions
+cat > "$SESSION_ENTRY" <<'EOF'
+[Desktop Entry]
+Name=Phasor
+Comment=Phasor Shell on MangoWM
+Exec=/usr/bin/phasor-session
+TryExec=/usr/bin/phasor-session
+Type=Application
+DesktopNames=Phasor;Mango;
+X-Phasor-Managed=true
+EOF
+chmod 644 /usr/share/wayland-sessions/phasor.desktop
+printf 'Installed Phasor under %s. Run phasor-doctor before selecting the session.\n' "$DEST"

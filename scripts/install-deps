@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -r /etc/os-release ]]; then
+    printf 'Cannot identify this Linux distribution. Install the documented dependencies manually.\n' >&2
+    exit 1
+fi
+. /etc/os-release
+case "${ID:-} ${ID_LIKE:-}" in
+    *arch*|*cachy*) ;;
+    *) printf 'This helper supports Arch-based systems only; no packages were changed.\n' >&2; exit 1 ;;
+esac
+if (( EUID == 0 )); then
+    printf 'Run this helper as your regular user; it uses sudo for package installation and makepkg for MangoWM.\n' >&2
+    exit 1
+fi
+
+official=(quickshell python xdg-utils wl-clipboard playerctl cliphist swaync flameshot swaybg brightnessctl pipewire wireplumber networkmanager bluez polkit polkit-gnome base-devel git)
+if ! command -v pacman >/dev/null 2>&1; then
+    printf 'pacman was not found. Install Arch package equivalents manually.\n' >&2
+    exit 1
+fi
+sudo pacman -S --needed "${official[@]}"
+
+if ! command -v mango >/dev/null 2>&1 || ! command -v mmsg >/dev/null 2>&1; then
+    if command -v paru >/dev/null 2>&1; then
+        paru -S --needed mangowm-git
+    elif command -v yay >/dev/null 2>&1; then
+        yay -S --needed mangowm-git
+    elif command -v makepkg >/dev/null 2>&1; then
+        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/phasor-mangowm.XXXXXXXX")"
+        trap 'rm -rf -- "$build_dir"' EXIT
+        git clone https://aur.archlinux.org/mangowm-git.git "$build_dir/mangowm-git"
+        (cd "$build_dir/mangowm-git" && makepkg -si)
+    else
+        cat >&2 <<'EOF'
+MangoWM is provided as `mangowm-git` in the AUR. Install it with paru/yay,
+or makepkg from a regular user account, then rerun `./scripts/install`.
+EOF
+        exit 1
+    fi
+fi
+
+if ! command -v mango >/dev/null 2>&1 || ! command -v mmsg >/dev/null 2>&1; then
+    printf 'MangoWM installation finished without both mango and mmsg commands. Check the package build output.\n' >&2
+    exit 1
+fi

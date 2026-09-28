@@ -4,17 +4,23 @@ Phasor Shell is a portable desktop shell for MangoWM, built with Quickshell and 
 
 Phasor keeps compositor and system integration behind `phasor-core` services. Its first-party UI is loaded through the same versioned plugin host intended for third-party components.
 
-## Development install
+## Install on CachyOS or Arch
 
-Clone the repository into `~/Work/phasor`, then run:
+Run these commands in a terminal:
 
 ```bash
-./scripts/install-dev
+mkdir -p ~/Work && git clone https://github.com/tzachmost/phasor.git ~/Work/phasor && cd ~/Work/phasor && ./scripts/install
 ```
 
-The development installer creates Phasor-owned links under `~/.config/phasor`, `~/.local/share/phasor`, `~/.local/bin`, and `~/.local/share/wayland-sessions`. It does not replace Mango's existing configuration. On a fresh Arch/CachyOS install, use `./scripts/install-deps` first if MangoWM, Quickshell, or the base Wayland tools are missing. Then choose **Phasor** from the login session selector.
+The installer adds the required Arch packages, installs MangoWM from the AUR (using paru/yay or makepkg), creates Phasor-owned links under `~/.local/bin`, installs default settings if needed, registers the Phasor login session, and runs diagnostics. It keeps existing MangoWM configuration and refuses to replace unrecognized Phasor paths. The session starts with a Phasor background; set `appearance.wallpaper` in `~/.config/phasor/settings.json` to an image path to use your own wallpaper. Choose **Phasor** from the login session selector when installation completes.
 
-Run the shell directly from the checkout with `./scripts/dev-run`. Run `./scripts/doctor` for diagnostics.
+For a development-only link install after dependencies are present, use `./scripts/install-dev`. Run `./scripts/doctor` for diagnostics. For a system install, use `sudo ./scripts/install-system`.
+
+Update the development checkout with:
+
+```bash
+cd ~/Work/phasor && git pull && ./scripts/install-dev
+```
 
 ## Project layout
 
@@ -31,4 +37,4 @@ See [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/road
 
 ## Current scope
 
-v0.1 establishes the Phasor session, the service boundary, Mango spaces/windows operations, an app/file launcher plugin, diagnostics, and plugin discovery/lifecycle. MangoWM and Quickshell must be installed on the target system. Full session validation is reserved for a fresh CachyOS install.
+v0.1 establishes the Phasor session, wallpaper, the service boundary, Mango spaces/windows operations, an app/file launcher plugin, diagnostics, and plugin discovery/lifecycle. The core exposes Space state and controls, though an in-shell Space indicator is still planned. File actions currently cover open, reveal, and copy path; rename, delete, share, and copy-file actions are not implemented. MangoWM and Quickshell must be installed on the target system. Full session validation is reserved for a fresh CachyOS install.

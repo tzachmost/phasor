@@ -3,12 +3,15 @@
 ## v0.1 foundation
 
 - [x] Monorepo and portable core/service contracts
-- [ ] Development/session scripts and CachyOS dependency path
-- [ ] Mango state/actions adapter and Spaces
-- [ ] Quickshell plugin host and Launcher reference plugin
-- [ ] Home file search/index, app actions, shared theme tokens
-- [ ] Diagnostics, focused tests, Arch package recipe
+- [x] Development/session scripts and CachyOS dependency path
+- [x] Mango state/actions adapter and Space keyboard shortcuts
+- [ ] In-shell Space indicator and switcher
+- [x] Quickshell plugin host and Launcher reference plugin
+- [x] Home file search/index, app discovery/launch, shared theme tokens
+- [x] Diagnostics and Arch package recipe
 - [ ] Fresh CachyOS validation
+- [ ] Theme and reduced-motion settings applied to QML tokens
+- [ ] Complete file action menu (rename, delete, share, copy file)
 
 ## After v0.1
 

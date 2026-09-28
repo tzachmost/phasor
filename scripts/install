@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if (( EUID == 0 )); then
+    printf 'Run this installer as your regular user; it will request sudo when packages are installed.\n' >&2
+    exit 1
+fi
+
+"$ROOT/scripts/install-deps"
+"$ROOT/scripts/install-dev"
+printf '\nInstallation finished. Running Phasor diagnostics:\n'
+"$ROOT/scripts/doctor"
+printf '\nChoose Phasor from your login session selector to start it.\n'
