@@ -1,0 +1,4 @@
+module Phasor.Api
+singleton Api 1.0 Api.qml
+PluginContext 1.0 PluginContext.qml
+Request 1.0 Request.qml

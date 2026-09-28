@@ -1,0 +1,15 @@
+{
+  "id": "dev.phasor.clock",
+  "name": "Phasor Clock",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Clock.qml",
+  "categories": ["status-item"],
+  "capabilities": [],
+  "permissions": [],
+  "supportedSlots": ["launcher.status", "dock.status", "bar.right"],
+  "contributions": [
+    { "slot": "launcher.status", "entrypoint": "ClockSlot.qml" }
+  ],
+  "builtin": true
+}

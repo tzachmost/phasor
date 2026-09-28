@@ -13,6 +13,6 @@
 | Super+Left-drag | Move floating window |
 | Super+Right-drag | Resize floating window |
 | Super+Middle-click | Toggle floating/tiling |
-| Super+Ctrl+T | Toggle always-on-top across tags |
+| Super+Ctrl+T | Reserved; Mango does not currently expose an always-on-top action |
 
 Bindings are installed only in Phasor's Mango config and do not modify `~/.config/mango/`.

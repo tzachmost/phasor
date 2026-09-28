@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -uo pipefail
+SCRIPT_PATH="$(readlink -f "$0")"
+PHASOR_HOME="$(dirname "$(dirname "$SCRIPT_PATH")")"
+export PHASOR_HOME
+export PATH="$PHASOR_HOME/scripts:$PHASOR_HOME/session:$HOME/.local/bin:$PATH"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/phasor-$(id -u)}"
+PHASOR_RUNTIME="$RUNTIME_DIR/phasor"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/phasor"
+LOG_FILE="$STATE_DIR/session.log"
+mkdir -p "$PHASOR_RUNTIME" "$STATE_DIR"
+chmod 700 "$PHASOR_RUNTIME" "$STATE_DIR" 2>/dev/null || true
+
+if [[ "${1:-}" == "--capture-mango-env" ]]; then
+    if [[ -z "${MANGO_INSTANCE_SIGNATURE:-}" ]]; then
+        printf 'MANGO_INSTANCE_SIGNATURE is missing in Mango exec environment\n' >> "$LOG_FILE"
+        exit 1
+    fi
+    tmp="$PHASOR_RUNTIME/mango-instance.tmp"
+    printf '%s\n' "$MANGO_INSTANCE_SIGNATURE" > "$tmp"
+    chmod 600 "$tmp"
+    mv -f -- "$tmp" "$PHASOR_RUNTIME/mango-instance"
+    exit 0
+fi
+
+exec >> "$LOG_FILE" 2>&1
+printf '\n[%s] Phasor session starting\n' "$(date --iso-8601=seconds)"
+for executable in mango mmsg quickshell python3 swaybg; do
+    if ! command -v "$executable" >/dev/null 2>&1; then
+        printf 'Required command is missing: %s\n' "$executable"
+        exit 1
+    fi
+done
+
+MANGO_CONFIG="${PHASOR_MANGO_CONFIG:-$PHASOR_HOME/config/mango/config.conf}"
+if [[ ! -r "$MANGO_CONFIG" ]]; then printf 'Mango config is not readable: %s\n' "$MANGO_CONFIG"; exit 1; fi
+rm -f -- "$PHASOR_RUNTIME/mango-instance" "$PHASOR_RUNTIME/mango-instance.tmp"
+
+mango -c "$MANGO_CONFIG" &
+MANGO_PID=$!
+CORE_PID=
+QS_PID=
+SWAYNC_PID=
+CLIPHIST_PID=
+POLKIT_PID=
+SWAYBG_PID=
+cleanup() {
+    [[ -z "$QS_PID" ]] || kill "$QS_PID" 2>/dev/null || true
+    [[ -z "$SWAYNC_PID" ]] || kill "$SWAYNC_PID" 2>/dev/null || true
+    [[ -z "$CLIPHIST_PID" ]] || kill "$CLIPHIST_PID" 2>/dev/null || true
+    [[ -z "$POLKIT_PID" ]] || kill "$POLKIT_PID" 2>/dev/null || true
+    [[ -z "$SWAYBG_PID" ]] || kill "$SWAYBG_PID" 2>/dev/null || true
+    [[ -z "$CORE_PID" ]] || kill "$CORE_PID" 2>/dev/null || true
+    [[ -z "$MANGO_PID" ]] || kill "$MANGO_PID" 2>/dev/null || true
+    [[ -z "$QS_PID" ]] || wait "$QS_PID" 2>/dev/null || true
+    [[ -z "$SWAYNC_PID" ]] || wait "$SWAYNC_PID" 2>/dev/null || true
+    [[ -z "$CLIPHIST_PID" ]] || wait "$CLIPHIST_PID" 2>/dev/null || true
+    [[ -z "$POLKIT_PID" ]] || wait "$POLKIT_PID" 2>/dev/null || true
+    [[ -z "$SWAYBG_PID" ]] || wait "$SWAYBG_PID" 2>/dev/null || true
+    [[ -z "$CORE_PID" ]] || wait "$CORE_PID" 2>/dev/null || true
+    [[ -z "$MANGO_PID" ]] || wait "$MANGO_PID" 2>/dev/null || true
+    rm -f -- "$PHASOR_RUNTIME/mango-instance" "$PHASOR_RUNTIME/mango-instance.tmp"
+}
+is_running() {
+    local state
+    state="$(ps -o stat= -p "$1" 2>/dev/null || true)"
+    [[ -n "$state" && "$state" != Z* ]]
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+SIGNATURE=
+for ((attempt=0; attempt<120; attempt++)); do
+    if ! is_running "$MANGO_PID"; then
+        wait "$MANGO_PID"; status=$?
+        printf 'Mango exited during startup (status %s).\n' "$status"
+        exit "$status"
+    fi
+    if [[ -s "$PHASOR_RUNTIME/mango-instance" ]]; then
+        IFS= read -r SIGNATURE < "$PHASOR_RUNTIME/mango-instance" || true
+        if [[ -n "$SIGNATURE" ]] && MANGO_INSTANCE_SIGNATURE="$SIGNATURE" mmsg get version >/dev/null 2>&1; then break; fi
+    fi
+    sleep 0.25
+done
+if [[ -z "$SIGNATURE" ]] || ! MANGO_INSTANCE_SIGNATURE="$SIGNATURE" mmsg get version >/dev/null 2>&1; then
+    printf 'Mango IPC did not become ready or its environment was not captured. See Mango logs.\n'
+    exit 1
+fi
+export MANGO_INSTANCE_SIGNATURE="$SIGNATURE"
+printf 'Mango IPC is ready. Starting Phasor services.\n'
+
+phasor-core &
+CORE_PID=$!
+for ((attempt=0; attempt<40; attempt++)); do
+    if phasorctl ping >/dev/null 2>&1; then break; fi
+    sleep 0.125
+done
+if ! phasorctl ping >/dev/null 2>&1; then printf 'Phasor core did not start.\n'; exit 1; fi
+
+wallpaper="$(phasorctl rpc theme.get | python3 -c 'import json,sys; print(json.load(sys.stdin).get("wallpaper", ""))')"
+if [[ -n "$wallpaper" && -r "$wallpaper" ]]; then
+    swaybg -i "$wallpaper" -m fill &
+elif [[ -n "$wallpaper" ]]; then
+    printf 'Configured wallpaper is unreadable; using the Phasor background color.\n'
+    swaybg -c '#111318' &
+else
+    swaybg -c '#111318' &
+fi
+SWAYBG_PID=$!
+
+if command -v swaync >/dev/null 2>&1; then
+    swaync &
+    SWAYNC_PID=$!
+else
+    printf 'Optional notification daemon swaync is not installed.\n'
+fi
+POLKIT_AGENT=/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+if [[ -x "$POLKIT_AGENT" ]]; then
+    "$POLKIT_AGENT" &
+    POLKIT_PID=$!
+elif command -v polkit-gnome-authentication-agent-1 >/dev/null 2>&1; then
+    polkit-gnome-authentication-agent-1 &
+    POLKIT_PID=$!
+else
+    printf 'Optional polkit-gnome authentication agent is not installed.\n'
+fi
+if command -v wl-paste >/dev/null 2>&1 && command -v cliphist >/dev/null 2>&1; then
+    wl-paste --watch cliphist store &
+    CLIPHIST_PID=$!
+else
+    printf 'Optional clipboard history needs both wl-paste and cliphist.\n'
+fi
+
+restart_count=0
+while is_running "$MANGO_PID"; do
+    if [[ -n "$QS_PID" ]] && is_running "$QS_PID"; then
+        sleep 0.35
+        continue
+    fi
+    if (( restart_count >= 3 )); then
+        printf 'Quickshell exited repeatedly; leaving Mango available for recovery.\n'
+        while is_running "$MANGO_PID"; do sleep 1; done
+        break
+    fi
+    ((restart_count+=1))
+    printf 'Starting Quickshell (attempt %s).\n' "$restart_count"
+    quickshell --no-duplicate --path "$PHASOR_HOME/shell/shell.qml" &
+    QS_PID=$!
+    sleep 0.5
+done
+
+wait "$MANGO_PID"; MANGO_STATUS=$?
+printf 'Mango exited with status %s; stopping Phasor services.\n' "$MANGO_STATUS"
+exit "$MANGO_STATUS"

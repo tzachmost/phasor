@@ -1,0 +1,22 @@
+{
+  "id": "dev.phasor.launcher",
+  "name": "Phasor Launcher",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Launcher.qml",
+  "categories": ["surface", "overlay", "launcher-provider", "search-provider"],
+  "capabilities": ["apps.read", "apps.launch", "apps.favorites", "apps.store", "files.search", "files.open", "files.reveal", "clipboard.write"],
+  "permissions": [],
+  "supportedSlots": ["launcher.results", "launcher.actions"],
+  "settingsSchema": "settings.schema.json",
+  "builtin": true,
+  "surface": {
+    "anchor": "overlay",
+    "thickness": 0,
+    "reservesWorkArea": false,
+    "overlaysWindows": true,
+    "autoHide": false,
+    "priority": 100,
+    "slots": ["launcher.results", "launcher.actions"]
+  }
+}

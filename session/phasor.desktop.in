@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Phasor
+Comment=Phasor Shell on MangoWM
+Exec=@PHASOR_SESSION_PATH@
+TryExec=@PHASOR_SESSION_PATH@
+Type=Application
+DesktopNames=Phasor;Mango;
+X-Phasor-Managed=true
