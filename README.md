@@ -12,14 +12,14 @@ Run these commands in a terminal:
 mkdir -p ~/Work && git clone https://github.com/tzachmost/phasor.git ~/Work/phasor && cd ~/Work/phasor && ./scripts/install
 ```
 
-The installer adds the required Arch packages, installs MangoWM from the AUR (using paru/yay or makepkg), creates Phasor-owned links under `~/.local/bin`, installs default settings if needed, registers the Phasor login session, and runs diagnostics. It keeps existing MangoWM configuration and refuses to replace unrecognized Phasor paths. The session starts with a Phasor background; set `appearance.wallpaper` in `~/.config/phasor/settings.json` to an image path to use your own wallpaper. Choose **Phasor** from the login session selector when installation completes.
+The installer adds the required Arch packages, installs MangoWM from the AUR (using paru/yay or makepkg), creates Phasor-owned development links under `~/.local/bin`, installs default settings if needed, and installs the managed runtime and Wayland session entry system-wide. The login chooser can then list **Phasor** separately from Mango. The installer runs diagnostics, preserves existing MangoWM configuration, and refuses to replace unrecognized Phasor paths. The session starts with a Phasor background; set `appearance.wallpaper` in `~/.config/phasor/settings.json` to an image path to use your own wallpaper.
 
-For a development-only link install after dependencies are present, use `./scripts/install-dev`. Run `./scripts/doctor` for diagnostics. For a system install, use `sudo ./scripts/install-system`.
+For a development-only link install after dependencies are present, use `./scripts/install-dev`; this writes a user-local session entry, which some login managers do not show. Run `./scripts/doctor` for diagnostics. To install or update the system runtime and chooser entry separately, use `sudo ./scripts/install-system`.
 
 Update the development checkout with:
 
 ```bash
-cd ~/Work/phasor && git pull && ./scripts/install-dev
+cd ~/Work/phasor && git pull && ./scripts/install-dev && sudo ./scripts/install-system
 ```
 
 ## Project layout

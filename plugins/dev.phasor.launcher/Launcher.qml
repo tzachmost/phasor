@@ -5,7 +5,6 @@ import Quickshell
 import Quickshell.Wayland
 import "../../shell/theme" as Theme
 import "../../shell/components" as Components
-import "../../shell/components" as Components
 
 Item {
     id: launcher

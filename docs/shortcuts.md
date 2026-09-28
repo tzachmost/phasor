@@ -3,6 +3,7 @@
 | Shortcut | Action |
 | --- | --- |
 | Super+Space | Toggle Launcher |
+| Super+B | Open a blank page in the default browser |
 | Super+Ctrl+Left/Right | Previous/next Space |
 | Super+Ctrl+1..9 | Switch to Space 1..9 |
 | Super+Shift+Ctrl+Left/Right | Move focused window to adjacent Space |

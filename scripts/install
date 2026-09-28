@@ -9,6 +9,7 @@ fi
 
 "$ROOT/scripts/install-deps"
 "$ROOT/scripts/install-dev"
+sudo "$ROOT/scripts/install-system"
 printf '\nInstallation finished. Running Phasor diagnostics:\n'
 "$ROOT/scripts/doctor"
 printf '\nChoose Phasor from your login session selector to start it.\n'
