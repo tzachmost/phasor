@@ -12,7 +12,7 @@ The 1.0 release is the complete portable desktop shell described by the project 
 - [x] Provide documented install, update, diagnostics, and uninstall paths for Arch/CachyOS, Fedora/Universal Blue, and NixOS.
 - [x] Build and inspect the Arch package, Fedora RPM/SRPM, and NixOS package from clean source snapshots.
 - [x] Exercise package install, upgrade, and uninstall paths in clean isolated package roots for Arch, RPM, and Nix outputs.
-- [ ] Publish the versioned 1.0.0 packages and user documentation from a reviewed, committed source snapshot.
+- [x] Publish the versioned 1.0.0 packages and user documentation from a reviewed, committed source snapshot.
 - [x] Validate the complete Phasor session on a fresh CachyOS desktop, including login, surfaces, core actions, and clean shutdown.
 
 The Preview application is the first post-1.0 product. Build it after this checklist is complete and the service/plugin APIs are settled. Agent, Control, and Auth components remain later products.
@@ -32,5 +32,17 @@ The Preview application is the first post-1.0 product. Build it after this check
 
 ## Post-1.0 products
 
-- Preview application with multi-tool document viewing and editing
+- Preview application with multi-tool image/PDF viewing, navigation, markup, and export
 - Agent, Control, and Auth components after the shell/service APIs settle
+
+The 1.0 checklist is complete. Submitting the stable Arch recipe to the AUR is a separate distribution follow-up; it requires an AUR SSH key registered to the maintainer account.
+
+## Preview first milestone
+
+- [x] Install Preview as a standalone Wayland app with command-line and file-manager open paths.
+- [x] View common Qt-supported image formats and PDFs, with fit/zoom/rotation controls.
+- [x] Browse PDF thumbnails and pages, search text, select text, and copy it.
+- [x] Add pen, highlight, rectangle, and text markup with autosaved editable sidecars.
+- [ ] Crop and resize images, convert formats, and export a flattened result.
+- [ ] Export PDF markup into an editable or flattened PDF and add page operations.
+- [ ] Add forms, signatures, and print support.

@@ -28,6 +28,7 @@ if ! command -v pacman >/dev/null 2>&1; then
     exit 1
 fi
 sudo pacman -S --needed "${official[@]}"
+printf 'Optional PDF viewing in Preview: install qt6-webengine with pacman.\n'
 
 if ! command -v mango >/dev/null 2>&1 || ! command -v mmsg >/dev/null 2>&1; then
     if command -v paru >/dev/null 2>&1; then

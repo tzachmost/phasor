@@ -35,8 +35,9 @@ stdenvNoCC.mkDerivation {
 
     mkdir -p "$out/share/phasor" "$out/bin" "$out/share/wayland-sessions"
     cp -R "$src/README.md" "$src/AGENTS.md" "$src/LICENSE" \
-      "$src/shell" "$src/plugins" "$src/core" "$src/config" \
+      "$src/preview.qml" "$src/shell" "$src/plugins" "$src/core" "$src/config" \
       "$src/session" "$src/scripts" "$src/docs" "$out/share/phasor/"
+    cp -R "$src/apps" "$out/share/phasor/"
 
     runtimePath="${lib.makeBinPath [
       bash coreutils findutils gnugrep quickshell python3 xdg-utils wl-clipboard
@@ -51,6 +52,13 @@ stdenvNoCC.mkDerivation {
     makeWrapper "$out/share/phasor/session/phasor-session" "$out/bin/phasor-session" \
       --set PHASOR_HOME "$out/share/phasor" \
       --prefix PATH : "$runtimePath"
+    makeWrapper "$out/share/phasor/scripts/phasor-preview" "$out/bin/phasor-preview" \
+      --set PHASOR_PREVIEW_ROOT "$out/share/phasor" \
+      --prefix PATH : "$runtimePath"
+
+    mkdir -p "$out/share/applications"
+    install -m 644 "$out/share/phasor/apps/preview/phasor-preview.desktop" \
+      "$out/share/applications/phasor-preview.desktop"
 
     substitute "$out/share/phasor/session/phasor.desktop.in" \
       "$out/share/wayland-sessions/phasor.desktop" \

@@ -1,6 +1,6 @@
 [project]
 name = "phasor-core"
-version = "1.0.0"
+version = "1.1.0.dev0"
 description = "Portable service layer for Phasor Shell"
 requires-python = ">=3.11"
 license = { text = "MIT" }

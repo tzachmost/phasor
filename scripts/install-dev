@@ -3,11 +3,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 BIN_DIR="${HOME}/.local/bin"
 SESSION_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wayland-sessions"
+APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 PHASOR_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/phasor"
 PHASOR_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/phasor"
 PHASOR_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/phasor"
 
-mkdir -p "$BIN_DIR" "$SESSION_DIR" "$PHASOR_CONFIG" "$PHASOR_DATA/plugins" "$PHASOR_STATE"
+mkdir -p "$BIN_DIR" "$SESSION_DIR" "$APPLICATIONS_DIR" "$PHASOR_CONFIG" "$PHASOR_DATA/plugins" "$PHASOR_STATE"
 
 link_owned() {
     local source="$1" target="$2"
@@ -22,9 +23,10 @@ link_owned() {
     ln -s "$source" "$target"
 }
 
-for name in phasorctl phasor-core phasor-doctor; do
+for name in phasorctl phasor-core phasor-doctor phasor-preview; do
     link_owned "$ROOT/scripts/$name" "$BIN_DIR/$name"
 done
+link_owned "$ROOT/apps/preview/phasor-preview.desktop" "$APPLICATIONS_DIR/phasor-preview.desktop"
 link_owned "$ROOT/session/phasor-session" "$BIN_DIR/phasor-session"
 
 if [[ -L "$PHASOR_CONFIG/settings.json" && ! -e "$PHASOR_CONFIG/settings.json" ]]; then

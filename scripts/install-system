@@ -39,26 +39,35 @@ if [[ -e "$SESSION_ENTRY" || -L "$SESSION_ENTRY" ]]; then
         exit 1
     fi
 fi
+APPLICATION_ENTRY=/usr/share/applications/phasor-preview.desktop
+if [[ -e "$APPLICATION_ENTRY" || -L "$APPLICATION_ENTRY" ]]; then
+    if [[ -L "$APPLICATION_ENTRY" || ! -f "$APPLICATION_ENTRY" ]] || ! grep -q '^X-Phasor-Managed=true$' "$APPLICATION_ENTRY"; then
+        printf 'Refusing to replace an existing application entry not marked as Phasor-managed: %s\n' "$APPLICATION_ENTRY" >&2
+        exit 1
+    fi
+fi
 install -d "$DEST"
 tar -c --exclude='__pycache__' --exclude='*.py[co]' --exclude='*.egg-info' \
-    -f - -C "$ROOT" README.md AGENTS.md LICENSE shell plugins core config session scripts docs |
+    -f - -C "$ROOT" README.md AGENTS.md LICENSE preview.qml shell plugins apps core config session scripts docs |
     tar -x --no-same-owner -f - -C "$DEST"
 printf 'Managed by Phasor system installer.\n' > "$DEST/.phasor-managed"
 chmod 644 "$DEST/.phasor-managed"
 {
-    printf '%s\n' README.md AGENTS.md LICENSE
-    for directory in shell plugins core config session scripts docs; do
+    printf '%s\n' README.md AGENTS.md LICENSE preview.qml
+    for directory in shell plugins apps core config session scripts docs; do
         while IFS= read -r -d '' source_file; do
             printf '%s\n' "${source_file#"$ROOT"/}"
         done < <(find "$ROOT/$directory" -type f ! -path '*/__pycache__/*' ! -name '*.py[co]' ! -name '*.egg-info' -print0)
     done
 } > "$DEST/.phasor-owned-files"
 chmod 644 "$DEST/.phasor-owned-files"
-for name in phasorctl phasor-core phasor-doctor; do
+for name in phasorctl phasor-core phasor-doctor phasor-preview; do
     target="/usr/bin/$name"
     [[ -L "$target" ]] || ln -s "$DEST/scripts/$name" "$target"
 done
 [[ -L /usr/bin/phasor-session ]] || ln -s "$DEST/session/phasor-session" /usr/bin/phasor-session
+install -d /usr/share/applications
+install -m 644 "$DEST/apps/preview/phasor-preview.desktop" "$APPLICATION_ENTRY"
 install -d /usr/share/wayland-sessions
 cat > "$SESSION_ENTRY" <<'EOF'
 [Desktop Entry]

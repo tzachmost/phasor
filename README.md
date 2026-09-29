@@ -25,6 +25,7 @@ cd ~/Work/phasor && git pull && ./scripts/install-dev && sudo ./scripts/install-
 ## Project layout
 
 - `shell/`: Quickshell entry point, theme tokens, plugin host, and UI components.
+- `apps/`: standalone Phasor applications, beginning with Preview.
 - `plugins/`: built-in plugins with versioned manifests.
 - `core/`: Python service registry, Mango adapter, app/file search, plugin policy, and local IPC.
 - `config/`: default user settings and Mango bindings.
@@ -39,4 +40,4 @@ For other installation paths and update/removal instructions, see [docs/install.
 
 ## Release status
 
-Phasor 1.0.0 delivers the Phasor session, validated settings, Mango Space and window controls, a top Bar with clock and tray support, an optional bottom Dock, notification and Do Not Disturb controls, clipboard history, screenshot capture, the Desktop shortcuts, the app and file Launcher, and diagnostics. Arch/CachyOS, Fedora/Universal Blue, and NixOS install adapters are included. See the [1.0 checklist](docs/roadmap.md) and [1.0.0 release notes](docs/releases/1.0.0.md). The Preview document app is planned after the shell reaches 1.0.
+Phasor 1.0.0 delivers the Phasor session, validated settings, Mango Space and window controls, a top Bar with clock and tray support, an optional bottom Dock, notification and Do Not Disturb controls, clipboard history, screenshot capture, the Desktop shortcuts, the app and file Launcher, and diagnostics. Arch/CachyOS, Fedora/Universal Blue, and NixOS install adapters are included. See the [1.0 checklist](docs/roadmap.md), [1.0.0 release notes](docs/releases/1.0.0.md), and [GitHub release](https://github.com/tzachmost/phasor/releases/tag/v1.0.0). Preview is the first post-1.0 application and is now in development.

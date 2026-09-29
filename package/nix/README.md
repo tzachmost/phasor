@@ -31,4 +31,6 @@ Phasor provides a flake package and NixOS module. Add Phasor to the host flake a
 
 Apply the system configuration with `sudo nixos-rebuild switch --flake .#myHost`, then select **Phasor** in the display manager. The package exposes `phasor-doctor`; settings, plugin data and caches stay in the user's XDG directories. Mango and Quickshell versions are pinned by the host's `flake.lock`.
 
+The Preview app is installed separately as `phasor-preview`. To enable its PDF viewer, add `pkgs.qt6.qtwebengine` to `environment.systemPackages`; image viewing works without that package.
+
 Update Phasor by updating the host flake lock and rebuilding. Remove the module import and rebuild to uninstall the session package. User settings and data are left in place.

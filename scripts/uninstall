@@ -15,7 +15,7 @@ if (( SYSTEM )); then
         printf 'Refusing to remove an unmanaged or untracked system directory at %s.\n' "$DEST" >&2
         exit 1
     fi
-    for name in phasorctl phasor-core phasor-doctor phasor-session; do
+    for name in phasorctl phasor-core phasor-doctor phasor-preview phasor-session; do
         target="/usr/bin/$name"
         source="$DEST/scripts/$name"
         [[ "$name" != phasor-session ]] || source="$DEST/session/phasor-session"
@@ -23,6 +23,9 @@ if (( SYSTEM )); then
     done
     if [[ -f /usr/share/wayland-sessions/phasor.desktop && ! -L /usr/share/wayland-sessions/phasor.desktop ]] && grep -q '^X-Phasor-Managed=true$' /usr/share/wayland-sessions/phasor.desktop; then
         rm -f /usr/share/wayland-sessions/phasor.desktop
+    fi
+    if [[ -f /usr/share/applications/phasor-preview.desktop && ! -L /usr/share/applications/phasor-preview.desktop ]] && grep -q '^X-Phasor-Managed=true$' /usr/share/applications/phasor-preview.desktop; then
+        rm -f /usr/share/applications/phasor-preview.desktop
     fi
     while IFS= read -r owned_path; do
         case "$owned_path" in
@@ -58,10 +61,12 @@ fi
 
 BIN_DIR="${HOME}/.local/bin"
 SESSION_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wayland-sessions"
-for name in phasorctl phasor-core phasor-doctor phasor-session; do
+for name in phasorctl phasor-core phasor-doctor phasor-preview phasor-session; do
     candidate="$BIN_DIR/$name"
     if [[ -L "$candidate" && "$(readlink -f "$candidate")" == "$ROOT/"* ]]; then rm -- "$candidate"; fi
 done
+application_entry="${XDG_DATA_HOME:-$HOME/.local/share}/applications/phasor-preview.desktop"
+if [[ -L "$application_entry" && "$(readlink -f "$application_entry")" == "$ROOT/apps/preview/phasor-preview.desktop" ]]; then rm -- "$application_entry"; fi
 session_file="$SESSION_DIR/phasor.desktop"
 if [[ -f "$session_file" && ! -L "$session_file" ]] && grep -q '^X-Phasor-Managed=true$' "$session_file"; then rm -- "$session_file"; fi
 printf 'Removed Phasor development links and session entry. User settings, plugin data, and caches were kept.\n'

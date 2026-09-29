@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Load and save editable Phasor Preview markup sidecars."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+MAX_SIDECAR_BYTES = 4 * 1024 * 1024
+MAX_ANNOTATIONS = 2000
+MAX_POINTS_PER_STROKE = 6000
+COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$")
+
+
+def _source_path(value: str) -> Path:
+    path = Path(value).expanduser().absolute()
+    if not path.is_file():
+        raise ValueError("The document file does not exist or is not a regular file")
+    return path
+
+
+def _sidecar_path(source: Path) -> Path:
+    return source.with_name(source.name + ".phasor-markup.json")
+
+
+def _coordinate(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Markup coordinates must be numbers")
+    result = float(value)
+    if not math.isfinite(result) or result < 0 or result > 1:
+        raise ValueError("Markup coordinates must be between zero and one")
+    return result
+
+
+def _validate_annotation(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Each markup item must be an object")
+    kind = value.get("type")
+    color = value.get("color", "#8bd5ca")
+    if kind not in {"stroke", "rectangle", "highlight", "text"}:
+        raise ValueError("Unsupported markup type")
+    if not isinstance(color, str) or not COLOR_RE.fullmatch(color):
+        raise ValueError("Markup color must be a hex color")
+
+    result: dict[str, Any] = {"type": kind, "color": color}
+    if kind == "stroke":
+        points = value.get("points")
+        if not isinstance(points, list) or not points or len(points) > MAX_POINTS_PER_STROKE:
+            raise ValueError("A pen stroke must contain between one and 6000 points")
+        normalized_points: list[list[float]] = []
+        for point in points:
+            if not isinstance(point, list) or len(point) != 2:
+                raise ValueError("A pen point must contain two coordinates")
+            normalized_points.append([_coordinate(point[0]), _coordinate(point[1])])
+        result["points"] = normalized_points
+        result["width"] = _width(value.get("width", 0.006))
+    elif kind in {"rectangle", "highlight"}:
+        result.update({
+            "x1": _coordinate(value.get("x1")),
+            "y1": _coordinate(value.get("y1")),
+            "x2": _coordinate(value.get("x2")),
+            "y2": _coordinate(value.get("y2")),
+            "width": _width(value.get("width", 0.006)),
+        })
+    else:
+        text = value.get("text")
+        if not isinstance(text, str) or len(text) > 4096:
+            raise ValueError("Markup text must be a string up to 4096 characters")
+        result.update({
+            "x": _coordinate(value.get("x")),
+            "y": _coordinate(value.get("y")),
+            "text": text,
+            "size": _width(value.get("size", 0.038), maximum=0.2),
+        })
+    return result
+
+
+def _width(value: Any, maximum: float = 0.05) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Markup size must be a number")
+    result = float(value)
+    if not math.isfinite(result) or result <= 0 or result > maximum:
+        raise ValueError("Markup size is outside the supported range")
+    return result
+
+
+def validate_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("version") != 1:
+        raise ValueError("Unsupported Preview markup file")
+    kind = value.get("kind")
+    if kind == "image":
+        annotations = value.get("annotations", [])
+        if not isinstance(annotations, list) or len(annotations) > MAX_ANNOTATIONS:
+            raise ValueError("Image markup has too many annotations")
+        return {"version": 1, "kind": "image", "annotations": [_validate_annotation(item) for item in annotations]}
+    if kind == "pdf":
+        pages = value.get("pages", {})
+        if not isinstance(pages, dict) or len(pages) > 20000:
+            raise ValueError("PDF markup has an invalid page map")
+        normalized: dict[str, list[dict[str, Any]]] = {}
+        total = 0
+        for page, annotations in pages.items():
+            if not isinstance(page, str) or not page.isdigit():
+                raise ValueError("PDF markup page ids must be non-negative integers")
+            if not isinstance(annotations, list):
+                raise ValueError("PDF page markup must be a list")
+            total += len(annotations)
+            if total > MAX_ANNOTATIONS:
+                raise ValueError("PDF markup has too many annotations")
+            normalized[str(int(page))] = [_validate_annotation(item) for item in annotations]
+        return {"version": 1, "kind": "pdf", "pages": normalized}
+    raise ValueError("Markup kind must be image or pdf")
+
+
+def load_markup(path: str) -> dict[str, Any]:
+    sidecar = _sidecar_path(_source_path(path))
+    if not sidecar.exists():
+        return {"version": 1, "kind": "image", "annotations": []}
+    if sidecar.stat().st_size > MAX_SIDECAR_BYTES:
+        raise ValueError("The Preview markup file exceeds the 4 MiB limit")
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"Could not read the Preview markup file: {error}") from error
+    return validate_payload(payload)
+
+
+def save_markup(path: str, payload_text: str) -> dict[str, Any]:
+    source = _source_path(path)
+    if len(payload_text.encode("utf-8")) > MAX_SIDECAR_BYTES:
+        raise ValueError("The Preview markup data exceeds the 4 MiB limit")
+    try:
+        payload = validate_payload(json.loads(payload_text))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"Invalid Preview markup data: {error}") from error
+
+    sidecar = _sidecar_path(source)
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    file_descriptor, temporary = tempfile.mkstemp(prefix=".phasor-preview-", suffix=".tmp", dir=sidecar.parent)
+    try:
+        os.fchmod(file_descriptor, 0o600)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, sidecar)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    return {"ok": True, "sidecar": str(sidecar)}
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 3 or argv[1] not in {"load", "save"}:
+        print(json.dumps({"error": "Usage: markup_store.py load|save DOCUMENT [JSON]"}))
+        return 2
+    try:
+        if argv[1] == "load":
+            result = load_markup(argv[2])
+        else:
+            if len(argv) != 4:
+                raise ValueError("Save requires one JSON markup argument")
+            result = save_markup(argv[2], argv[3])
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    except (OSError, ValueError) as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

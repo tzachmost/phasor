@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+PHASOR_PREVIEW_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+export PHASOR_PREVIEW_ROOT
+
+if [[ $# -gt 0 ]]; then
+    if [[ "$1" == file://* ]]; then
+        export PHASOR_PREVIEW_FILE="$1"
+    else
+        export PHASOR_PREVIEW_FILE="$(realpath -- "$1")"
+    fi
+fi
+
+exec quickshell --path "$PHASOR_PREVIEW_ROOT/preview.qml"

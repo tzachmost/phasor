@@ -36,6 +36,7 @@ packages=(
     playerctl brightnessctl pipewire-utils wireplumber NetworkManager bluez polkit-gnome git
 )
 sudo "${DNF[@]}" install -y "${packages[@]}"
+printf 'Optional PDF viewing in Preview: install qt6-qtpdf with %s.\n' "${DNF[0]}"
 
 if ! command -v mango >/dev/null 2>&1 || ! command -v mmsg >/dev/null 2>&1; then
     printf 'MangoWM installation finished without both mango and mmsg commands. Check the Terra package output.\n' >&2
