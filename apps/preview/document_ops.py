@@ -198,8 +198,17 @@ def export_image(source_value: str, output_value: str, options: dict[str, Any]) 
 
     try:
         with Image.open(source) as source_image:
-            if getattr(source_image, "n_frames", 1) > 1:
-                source_image.seek(0)
+            frame_count = int(getattr(source_image, "n_frames", 1))
+            requested_frame = options.get("frame_index", 0)
+            if isinstance(requested_frame, bool):
+                raise ValueError("Image frame must be a whole number")
+            try:
+                frame_index = int(requested_frame)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Image frame must be a whole number") from error
+            if str(frame_index) != str(requested_frame).strip() or frame_index < 0 or frame_index >= frame_count:
+                raise ValueError(f"Image frame must be between 0 and {max(0, frame_count - 1)}")
+            source_image.seek(frame_index)
             image = ImageOps.exif_transpose(source_image).copy().convert("RGBA")
     except (OSError, ValueError, Image.DecompressionBombError) as error:
         raise ValueError(f"Could not decode this image for export: {error}") from error
@@ -1116,6 +1125,7 @@ def print_document(source_value: str, options: dict[str, Any]) -> dict[str, Any]
                     "markup": markup,
                     "crop": options.get("crop"),
                     "rotation": options.get("rotation", 0),
+                    "frame_index": options.get("frame_index", 0),
                     "quality": 100,
                 },
             )

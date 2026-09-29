@@ -235,6 +235,7 @@ ApplicationWindow {
         if (!root.isPdf) {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
+            options.frame_index = viewerLoader.item.currentPage || 0
             options.width = imageWidthInput.text
             options.height = imageHeightInput.text
             options.preserve_aspect = root.preserveAspect
@@ -373,6 +374,7 @@ ApplicationWindow {
         if (!root.isPdf) {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
+            options.frame_index = viewerLoader.item.currentPage || 0
         }
         printProcess.inputPayload = JSON.stringify(options)
         printProcess.exec(["python3", documentOpsPath, "print", sourcePath, "-"])
@@ -816,8 +818,9 @@ ApplicationWindow {
             }
 
             RowLayout {
-                visible: root.isPdf
+                visible: root.isPdf || Boolean(viewerLoader.item && viewerLoader.item.pageCount > 1)
                 spacing: 6
+                Text { text: root.isPdf ? "Page" : "Frame"; color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
                 ToolAction { text: "‹"; compact: true; enabled: Boolean(viewerLoader.item && viewerLoader.item.currentPage > 0); onClicked: viewerLoader.item.goToPage(viewerLoader.item.currentPage - 1) }
                 TextField {
                     id: pageInput
@@ -845,6 +848,12 @@ ApplicationWindow {
                 }
                 Text { text: "/ " + (viewerLoader.item ? viewerLoader.item.pageCount : 0); color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
                 ToolAction { text: "›"; compact: true; enabled: Boolean(viewerLoader.item && viewerLoader.item.currentPage + 1 < viewerLoader.item.pageCount); onClicked: viewerLoader.item.goToPage(viewerLoader.item.currentPage + 1) }
+                ToolAction {
+                    text: viewerLoader.item && viewerLoader.item.framePlaybackPaused ? "Play" : "Pause"
+                    compact: true
+                    visible: Boolean(!root.isPdf && viewerLoader.item && viewerLoader.item.hasAnimation)
+                    onClicked: if (viewerLoader.item && viewerLoader.item.toggleFramePlayback) viewerLoader.item.toggleFramePlayback()
+                }
             }
 
             TextField {

@@ -35,6 +35,12 @@ class PreviewExportTests(unittest.TestCase):
         Image.new("RGB", (20, 10), "white").save(source)
         return source
 
+    def make_animated_image(self, name="animated.gif"):
+        source = self.root / name
+        frames = [Image.new("RGB", (8, 6), color) for color in ("red", "blue")]
+        frames[0].save(source, save_all=True, append_images=frames[1:], duration=100, loop=0)
+        return source
+
     def make_form_pdf(self, name="form.pdf"):
         source = self.root / name
         buffer = io.BytesIO()
@@ -273,6 +279,31 @@ class PreviewExportTests(unittest.TestCase):
         source = self.make_image()
         with self.assertRaisesRegex(ValueError, "original stays unchanged"):
             export_image(str(source), str(source), {"markup": {"version": 1, "kind": "image"}})
+
+    def test_animated_image_export_writes_the_selected_frame(self):
+        source = self.make_animated_image()
+        output = self.root / "second-frame.png"
+
+        result = export_image(
+            str(source), str(output),
+            {"frame_index": 1, "markup": {"version": 1, "kind": "image", "annotations": []}},
+        )
+
+        self.assertEqual((result["width"], result["height"]), (8, 6))
+        with Image.open(output) as exported:
+            self.assertEqual(exported.convert("RGB").getpixel((0, 0)), (0, 0, 255))
+
+    def test_animated_image_export_rejects_invalid_frame_indexes(self):
+        source = self.make_animated_image()
+        output = self.root / "invalid-frame.png"
+        for frame_index in (-1, 2, True, "next"):
+            with self.subTest(frame_index=frame_index):
+                with self.assertRaisesRegex(ValueError, "Image frame"):
+                    export_image(
+                        str(source), str(output),
+                        {"frame_index": frame_index, "markup": {"version": 1, "kind": "image", "annotations": []}},
+                    )
+                self.assertFalse(output.exists())
 
     def test_image_highlights_blend_without_making_pixels_transparent(self):
         source = self.root / "transparent.png"
@@ -936,6 +967,22 @@ class PreviewExportTests(unittest.TestCase):
                     {"markup": {"version": 1, "kind": "image", "annotations": []}},
                 )
         self.assertTrue(result["ok"])
+
+    def test_print_uses_the_selected_animated_frame(self):
+        source = self.make_animated_image()
+        with patch("apps.preview.document_ops.shutil.which", return_value="/usr/bin/lp"):
+            with patch(
+                "apps.preview.document_ops.subprocess.run",
+                return_value=SimpleNamespace(returncode=0, stdout="job-1", stderr=""),
+            ):
+                with patch("apps.preview.document_ops.export_image", wraps=export_image) as image_export:
+                    result = print_document(
+                        str(source),
+                        {"frame_index": 1, "markup": {"version": 1, "kind": "image", "annotations": []}},
+                    )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(image_export.call_args.args[2]["frame_index"], 1)
 
     def test_print_preserves_cropped_rotated_pdf_content_in_prepared_copy(self):
         from pypdf import PdfWriter

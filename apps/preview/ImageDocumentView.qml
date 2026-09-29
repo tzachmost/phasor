@@ -11,6 +11,7 @@ Item {
     property real strokeScale: 0.006
     property real userZoom: 1
     property real rotation: 0
+    property bool framePlaybackPaused: false
     property var cropRect: null
     readonly property bool sideways: Math.abs(rotation % 180) > 45 && Math.abs(rotation % 180) < 135
     readonly property real fitScale: {
@@ -21,10 +22,12 @@ Item {
     }
     readonly property real effectiveZoom: fitScale * userZoom
     readonly property int zoomPercent: Math.round(effectiveZoom * 100)
-    readonly property int pageCount: 1
-    readonly property int currentPage: 0
+    readonly property int pageCount: Math.max(1, image.frameCount)
+    readonly property int currentPage: image.status === Image.Ready && image.frameCount > 0 ? image.currentFrame : 0
+    readonly property bool hasAnimation: pageCount > 1
     readonly property string documentStatus: image.status === Image.Ready
         ? image.implicitWidth + " × " + image.implicitHeight + " px"
+            + (hasAnimation ? " · Frame " + (currentPage + 1) + " of " + pageCount : "")
         : image.status === Image.Loading ? "Loading image…" : image.status === Image.Error ? "Could not load this image" : ""
 
     signal markupChanged()
@@ -44,6 +47,16 @@ Item {
         userZoom = 1
     }
 
+    function goToPage(page) {
+        if (!hasAnimation || !Number.isInteger(page) || page < 0 || page >= pageCount) return
+        framePlaybackPaused = true
+        image.currentFrame = page
+    }
+
+    function toggleFramePlayback() {
+        if (hasAnimation) framePlaybackPaused = !framePlaybackPaused
+    }
+
     function clearCrop() {
         cropRect = null
     }
@@ -52,6 +65,7 @@ Item {
         cropRect = null
         rotation = 0
         userZoom = 1
+        framePlaybackPaused = false
         Qt.callLater(function() { viewport.returnToBounds() })
     }
 
@@ -87,12 +101,14 @@ Item {
             x: Math.max(0, (viewport.width - width) / 2)
             y: Math.max(0, (viewport.height - height) / 2)
 
-            Image {
+            AnimatedImage {
                 id: image
                 source: root.source
                 asynchronous: true
                 cache: false
                 autoTransform: true
+                playing: root.hasAnimation
+                paused: root.framePlaybackPaused
                 fillMode: Image.PreserveAspectFit
                 smooth: true
                 width: status === Image.Ready ? implicitWidth * root.effectiveZoom : 1
