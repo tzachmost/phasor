@@ -70,7 +70,7 @@ Item {
             phasor.request("apps.search", { query: "", limit: 30 }, function(result) {
                 if (result.error) { errorText = result.error; return }
                 results = (result.items || []).map(function(app) {
-                    return { kind: "app", id: app.id, name: app.name, detail: app.genericName || app.comment || "Application", icon: app.icon, favorite: app.favorite }
+                    return { kind: "app", id: app.id, name: app.name, detail: app.genericName || app.comment || "Application", icon: app.icon, favorite: app.favorite, recent: app.recent }
                 })
                 selectedIndex = 0
             })
@@ -87,7 +87,7 @@ Item {
         phasor.request("apps.search", { query: text, limit: 24 }, function(result) {
             if (result.error) errorText = result.error
             else apps = (result.items || []).map(function(app) {
-                return { kind: "app", id: app.id, name: app.name, detail: app.genericName || app.comment || "Application", icon: app.icon, favorite: app.favorite }
+                return { kind: "app", id: app.id, name: app.name, detail: app.genericName || app.comment || "Application", icon: app.icon, favorite: app.favorite, recent: app.recent }
             })
             update()
         })
@@ -319,7 +319,7 @@ Item {
                                 Text { text: modelData.name; color: Theme.Tokens.textPrimary; font.pixelSize: 15; elide: Text.ElideRight; Layout.fillWidth: true }
                                 Text { text: modelData.detail; color: Theme.Tokens.textSecondary; font.pixelSize: 11; elide: Text.ElideMiddle; Layout.fillWidth: true }
                             }
-                            Text { text: modelData.kind === "app" ? (modelData.favorite ? "PINNED" : "APP") : "FILE"; color: modelData.favorite ? Theme.Tokens.accent : Theme.Tokens.textSecondary; font.pixelSize: 10 }
+                            Text { text: modelData.kind === "app" ? (modelData.favorite ? "PINNED" : modelData.recent ? "RECENT" : "APP") : "FILE"; color: modelData.favorite || modelData.recent ? Theme.Tokens.accent : Theme.Tokens.textSecondary; font.pixelSize: 10 }
                         }
                         MouseArea {
                             anchors.fill: parent

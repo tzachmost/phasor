@@ -63,6 +63,17 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "plugins.dev.phasor.dock.enabled"):
                 load_settings()
 
+    def test_primary_shortcuts_and_dock_preferences_are_validated(self):
+        from phasor_core.config import default_settings, validate_settings
+        settings = default_settings()
+        settings["commands"]["shortcut"] = "Super+X"
+        with self.assertRaisesRegex(ValueError, "commands.shortcut"):
+            validate_settings(settings)
+        settings = default_settings()
+        settings["dock"]["showCloseButtons"] = "yes"
+        with self.assertRaisesRegex(ValueError, "dock.showCloseButtons"):
+            validate_settings(settings)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,12 @@
     "showRecents": false,
     "favorites": []
   },
+  "commands": {
+    "shortcut": "Super+/"
+  },
+  "settings": {
+    "shortcut": "Super+,"
+  },
   "spaces": {
     "count": 9,
     "animationDuration": 200
@@ -18,6 +24,10 @@
   "windows": {
     "focusMode": "click",
     "raiseOnFocus": true
+  },
+  "dock": {
+    "showCloseButtons": true,
+    "showEmptyState": true
   },
   "plugins": {
     "dev.phasor.bar": {
@@ -42,6 +52,9 @@
       "enabled": true
     },
     "dev.phasor.settings": {
+      "enabled": true
+    },
+    "dev.phasor.commands": {
       "enabled": true
     }
   }

@@ -172,6 +172,9 @@ class MangoAdapter:
     def minimize(self, client_id: str | None = None) -> dict[str, Any]:
         return self._dispatch("minimized", client_id=client_id)
 
+    def reload_config(self) -> dict[str, Any]:
+        return self._dispatch("reload_config")
+
     def switch_space(self, space_id: str) -> dict[str, Any]:
         self._validate_space(space_id)
         return self._dispatch("view", space_id, "0")

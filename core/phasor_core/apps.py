@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import configparser
+import json
 import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from .config import state_home
 
 
 def application_dirs() -> list[Path]:
@@ -65,15 +69,33 @@ class AppsService:
         self._cache = sorted(entries.values(), key=lambda row: row["name"].casefold())
         return self._cache
 
-    def search(self, query: str, limit: int = 50, favorites: list[str] | None = None) -> dict[str, Any]:
+    def search(
+        self,
+        query: str,
+        limit: int = 50,
+        favorites: list[str] | None = None,
+        show_recents: bool = False,
+    ) -> dict[str, Any]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise ValueError("application search limit must be from 1 to 200")
+        if not isinstance(show_recents, bool):
+            raise ValueError("show_recents must be a boolean")
         needle = query.strip().casefold()
         entries = self.list()
         favorite_ids = set(favorites or [])
+        recent_ids = self._recent_apps() if show_recents else []
+        recent_rank = {app_id: index for index, app_id in enumerate(recent_ids)}
         if not needle:
-            items = [{**app, "favorite": app["id"] in favorite_ids} for app in entries]
-            items.sort(key=lambda app: (not app["favorite"], app["name"].casefold()))
+            items = [
+                {**app, "favorite": app["id"] in favorite_ids, "recent": app["id"] in recent_rank}
+                for app in entries
+            ]
+            items.sort(key=lambda app: (
+                not app["favorite"],
+                not app["recent"],
+                recent_rank.get(app["id"], len(recent_rank)),
+                app["name"].casefold(),
+            ))
             return {"items": items[:limit], "total": len(items)}
         ranked = []
         for app in entries:
@@ -82,8 +104,15 @@ class AppsService:
             comment = app["comment"].casefold()
             app_id = app["id"].casefold()
             if needle in name or needle in generic or needle in comment or needle in app_id:
-                score = (not (app["id"] in favorite_ids), 0 if name.startswith(needle) else 1, name.find(needle) if needle in name else 99, name)
-                ranked.append((score, {**app, "favorite": app["id"] in favorite_ids}))
+                is_recent = app["id"] in recent_rank
+                score = (
+                    not (app["id"] in favorite_ids),
+                    not is_recent,
+                    0 if name.startswith(needle) else 1,
+                    name.find(needle) if needle in name else 99,
+                    name,
+                )
+                ranked.append((score, {**app, "favorite": app["id"] in favorite_ids, "recent": is_recent}))
         ranked.sort(key=lambda item: item[0])
         return {"items": [app for _, app in ranked[:limit]], "total": len(ranked)}
 
@@ -103,6 +132,39 @@ class AppsService:
         launcher["favorites"] = favorites
         save_settings(settings)
         return {"id": app_id, "favorite": enabled}
+
+    @staticmethod
+    def _recent_apps() -> list[str]:
+        path = state_home() / "recent-apps.json"
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(value, list):
+            return []
+        return list(dict.fromkeys(item for item in value if isinstance(item, str)))[:20]
+
+    @staticmethod
+    def _record_recent(app_id: str) -> None:
+        recent = [app_id, *(item for item in AppsService._recent_apps() if item != app_id)][:20]
+        path = state_home() / "recent-apps.json"
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            fd, temporary = tempfile.mkstemp(prefix=".recent-apps-", suffix=".tmp", dir=path.parent)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(recent, stream, ensure_ascii=False)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, path)
+        except OSError:
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
     def open_store(self, app_id: str) -> dict[str, Any]:
         if not any(row["id"] == app_id for row in self.list()):
@@ -128,6 +190,7 @@ class AppsService:
             subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError as exc:
             raise ValueError(f"Could not launch {app['name']}: {exc}") from exc
+        self._record_recent(app_id)
         return {"launched": app_id, "name": app["name"]}
 
 

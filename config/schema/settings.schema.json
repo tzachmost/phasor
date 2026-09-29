@@ -3,7 +3,7 @@
   "$id": "https://phasor.dev/schema/settings-v1.json",
   "title": "Phasor settings",
   "type": "object",
-  "required": ["schemaVersion", "appearance", "launcher", "spaces", "windows", "plugins"],
+  "required": ["schemaVersion", "appearance", "launcher", "commands", "settings", "spaces", "windows", "dock", "plugins"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "appearance": {
@@ -19,9 +19,26 @@
     "launcher": {
       "type": "object",
       "properties": {
-        "shortcut": { "type": "string" },
+        "shortcut": {
+          "enum": ["Super+Space", "Super+Alt+Space", "Super+D", "Super+R", "Alt+Space", "Ctrl+Space"],
+          "default": "Super+Space"
+        },
         "showRecents": { "type": "boolean" },
         "favorites": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "commands": {
+      "type": "object",
+      "properties": {
+        "shortcut": { "enum": ["Super+/", "Super+Shift+/", "Ctrl+Alt+Space", "Super+Alt+/", "Ctrl+Shift+P"], "default": "Super+/" }
+      },
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "shortcut": { "enum": ["Super+,", "Super+Alt+Comma", "Super+Shift+Comma", "Ctrl+Alt+S"], "default": "Super+," }
       },
       "additionalProperties": false
     },
@@ -38,6 +55,14 @@
       "properties": {
         "focusMode": { "enum": ["click", "sloppy"] },
         "raiseOnFocus": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "dock": {
+      "type": "object",
+      "properties": {
+        "showCloseButtons": { "type": "boolean", "default": true },
+        "showEmptyState": { "type": "boolean", "default": true }
       },
       "additionalProperties": false
     },

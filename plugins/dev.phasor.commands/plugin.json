@@ -1,0 +1,22 @@
+{
+  "id": "dev.phasor.commands",
+  "name": "Phasor Commands",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Commands.qml",
+  "categories": ["overlay", "command-palette"],
+  "capabilities": ["apps.read", "settings.read", "settings.control", "spaces.control"],
+  "permissions": [],
+  "supportedSlots": [],
+  "contributions": [],
+  "builtin": true,
+  "surface": {
+    "anchor": "overlay",
+    "thickness": 0,
+    "reservesWorkArea": false,
+    "overlaysWindows": true,
+    "autoHide": false,
+    "priority": 110,
+    "slots": []
+  }
+}

@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from typing import Any
 
 from .apps import AppsService
 from .files import ClipboardService, FileIndexService
-from .mango import MangoAdapter
+from .mango import MangoAdapter, MangoError
 from .plugins import PluginManager
 from .system import SystemService
 
 
 METHOD_CAPABILITIES = {
     "launcher.toggle": "apps.read",
+    "commands.toggle": "settings.control",
     "settings.toggle": "settings.control",
     "apps.search": "apps.read",
     "apps.launch": "apps.launch",
@@ -118,7 +120,13 @@ class Services:
             self.publish({"type": "action", "name": "launcher.toggle", "data": {}})
             return {"toggled": True}
         if method == "settings.toggle":
-            self.publish({"type": "action", "name": "settings.toggle", "data": {}})
+            section = params.get("section")
+            if section not in {None, "appearance", "shell", "system", "shortcuts", "about"}:
+                raise ValueError("Unknown Settings section")
+            self.publish({"type": "action", "name": "settings.toggle", "data": {"section": section}})
+            return {"toggled": True}
+        if method == "commands.toggle":
+            self.publish({"type": "action", "name": "commands.toggle", "data": {}})
             return {"toggled": True}
         if method == "clipboard.toggle":
             self.publish({"type": "action", "name": "clipboard.toggle", "data": {}})
@@ -136,6 +144,31 @@ class Services:
             save_settings(updated)
             result = load_settings()
             event_data = {"keys": sorted(patch)}
+            launcher_patch = patch.get("launcher")
+            mango_settings_changed = bool({"spaces", "windows", "commands", "settings"}.intersection(patch)) or (
+                isinstance(launcher_patch, dict) and "shortcut" in launcher_patch
+            )
+            managed_mango_config = os.environ.get("PHASOR_MANAGED_MANGO_CONFIG")
+            if mango_settings_changed:
+                if managed_mango_config:
+                    try:
+                        from .mango_config import write_mango_config
+                        write_mango_config(result, managed_mango_config)
+                        self.mango.reload_config()
+                        session_config = {"reloaded": True, "restartRequired": False}
+                    except (MangoError, OSError, ValueError) as exc:
+                        session_config = {"reloaded": False, "restartRequired": True, "error": str(exc)}
+                elif os.environ.get("PHASOR_MANGO_CONFIG"):
+                    session_config = {
+                        "reloaded": False,
+                        "restartRequired": False,
+                        "customConfig": True,
+                        "error": "A custom Mango config is active. These session preferences are saved, but do not override that file.",
+                    }
+                else:
+                    session_config = {"reloaded": False, "restartRequired": True}
+                event_data["sessionConfig"] = session_config
+                result["sessionConfig"] = session_config
             plugins_patch = patch.get("plugins")
             if isinstance(plugins_patch, dict):
                 previous_plugins = previous.get("plugins", {})
@@ -186,11 +219,13 @@ class Services:
             return self.invoke_plugin(str(params["id"]), str(params["method"]), plugin_params)
         if method == "apps.search":
             from .config import load_settings
-            favorites = load_settings().get("launcher", {}).get("favorites", [])
+            launcher = load_settings().get("launcher", {})
+            favorites = launcher.get("favorites", [])
+            show_recents = bool(launcher.get("showRecents", False))
             limit = params.get("limit", 50)
             if isinstance(limit, bool) or not isinstance(limit, int):
                 raise ValueError("application search limit must be an integer")
-            return self.apps.search(str(params.get("query", "")), limit, list(favorites))
+            return self.apps.search(str(params.get("query", "")), limit, list(favorites), show_recents)
         if method == "apps.favorite":
             result = self.apps.favorite(str(params["id"]), params.get("enabled", True))
             self.publish({"type": "app.favoriteChanged", "name": result["id"], "data": result})

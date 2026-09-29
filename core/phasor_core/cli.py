@@ -30,6 +30,8 @@ def parser() -> argparse.ArgumentParser:
 
     launcher = commands.add_parser("launcher").add_subparsers(dest="action", required=True)
     launcher.add_parser("toggle")
+    command_palette = commands.add_parser("commands").add_subparsers(dest="action", required=True)
+    command_palette.add_parser("toggle")
 
     plugins = commands.add_parser("plugins").add_subparsers(dest="action", required=True)
     plugins.add_parser("list").add_argument("--json", action="store_true")
@@ -142,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
             result = request(args.method, json.loads(args.params))
         elif args.group == "launcher":
             result = request("launcher.toggle")
+        elif args.group == "commands":
+            result = request("commands.toggle")
         elif args.group == "plugins":
             if args.action == "list":
                 result = request("plugins.list")

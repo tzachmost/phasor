@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
 import "../../shell/theme" as Theme
@@ -13,6 +12,8 @@ Item {
     property var phasor
     property var windows: []
     property string errorText: ""
+    property bool showCloseButtons: true
+    property bool showEmptyState: true
 
     function refresh() {
         if (!phasor) return
@@ -38,7 +39,17 @@ Item {
         })
     }
 
-    Component.onCompleted: refresh()
+    function refreshSettings() {
+        if (!phasor) return
+        phasor.request("settings.get", {}, function(result) {
+            if (result.error) return
+            const dockSettings = result.dock || ({})
+            showCloseButtons = dockSettings.showCloseButtons !== false
+            showEmptyState = dockSettings.showEmptyState !== false
+        })
+    }
+
+    Component.onCompleted: { refresh(); refreshSettings() }
 
     Connections {
         target: dock.phasor
@@ -47,6 +58,7 @@ Item {
             if (event.type === "event" && event.name === "window.opened") dock.refresh()
             if (event.type === "event" && event.name === "window.closed") dock.refresh()
             if (event.type === "event" && event.name === "window.focused") dock.refresh()
+            if (event.type === "event" && event.name === "settings.changed") dock.refreshSettings()
         }
     }
 
@@ -121,9 +133,9 @@ Item {
                             Text {
                                 id: titleText
                                 anchors.left: parent.left
-                                anchors.right: closeButton.left
+                                anchors.right: dock.showCloseButtons ? closeButton.left : parent.right
                                 anchors.leftMargin: Theme.Tokens.spacingM
-                                anchors.rightMargin: Theme.Tokens.spacingXS
+                                anchors.rightMargin: dock.showCloseButtons ? Theme.Tokens.spacingXS : Theme.Tokens.spacingM
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: windowTile.modelData.title.length > 0 ? windowTile.modelData.title : windowTile.modelData.appId
                                 color: windowTile.modelData.focused ? Theme.Tokens.textPrimary : Theme.Tokens.textSecondary
@@ -139,6 +151,7 @@ Item {
 
                             Button {
                                 id: closeButton
+                                visible: dock.showCloseButtons
                                 width: 24
                                 height: 24
                                 anchors.right: parent.right
@@ -163,7 +176,7 @@ Item {
                     }
 
                     Text {
-                        visible: dock.windows.length === 0
+                        visible: dock.windows.length === 0 && dock.showEmptyState
                         width: visible ? 220 : 0
                         height: parent.height
                         text: dock.errorText.length > 0 ? dock.errorText : "No open windows"

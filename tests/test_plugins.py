@@ -30,6 +30,49 @@ def write_plugin(root: Path, plugin_id: str, *, builtin=False, surface=None):
 
 
 class PluginManagerTests(unittest.TestCase):
+    def test_settings_plugin_has_capabilities_for_its_system_controls(self):
+        root = Path(__file__).resolve().parents[1]
+        required = {
+            "settings.read", "settings.control",
+            "audio.read", "audio.control",
+            "network.status", "network.control",
+            "bluetooth.status", "bluetooth.control",
+            "brightness.read", "brightness.control",
+            "notifications.read", "notifications.control",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            env = {
+                "PHASOR_HOME": str(root),
+                "XDG_CONFIG_HOME": str(Path(directory) / "config"),
+                "XDG_DATA_HOME": str(Path(directory) / "data"),
+                "XDG_STATE_HOME": str(Path(directory) / "state"),
+            }
+            with patch.dict(os.environ, env):
+                manager = PluginManager()
+                manager.dirs = [root / "plugins"]
+                plugin = next(item for item in manager.discover() if item["id"] == "dev.phasor.settings")
+                self.assertTrue(plugin["loadable"])
+                self.assertTrue(required <= set(plugin["capabilities"]))
+                for capability in required:
+                    manager.require_capability("dev.phasor.settings", capability)
+
+    def test_command_palette_is_a_builtin_overlay_plugin(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            env = {
+                "PHASOR_HOME": str(root),
+                "XDG_CONFIG_HOME": str(Path(directory) / "config"),
+                "XDG_DATA_HOME": str(Path(directory) / "data"),
+                "XDG_STATE_HOME": str(Path(directory) / "state"),
+            }
+            with patch.dict(os.environ, env):
+                manager = PluginManager()
+                manager.dirs = [root / "plugins"]
+                plugin = next(item for item in manager.discover() if item["id"] == "dev.phasor.commands")
+                self.assertTrue(plugin["loadable"])
+                for capability in plugin["capabilities"]:
+                    manager.require_capability("dev.phasor.commands", capability)
+
     def test_user_plugin_needs_bundle_specific_grant(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,9 +1,12 @@
 # Default shortcuts
 
+Launcher, Commands, and Settings shortcuts can be changed from Settings → Shortcuts. Commands opens the searchable palette; its "Change keyboard shortcuts" action opens that Settings page.
+
 | Shortcut | Action |
 | --- | --- |
 | Super+Space | Toggle Launcher |
 | Super+, | Open Settings |
+| Super+/ | Open the Commands palette |
 | Super+Shift+V | Open clipboard history |
 | Super+B | Open a blank page in the default browser |
 | Super+Ctrl+Left/Right | Previous/next Space |

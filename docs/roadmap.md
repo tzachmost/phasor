@@ -37,6 +37,12 @@ The Preview application is the first post-1.0 product. Build it after this check
 
 The 1.0 checklist is complete. Submitting the stable Arch recipe to the AUR is a separate distribution follow-up; it requires an AUR SSH key registered to the maintainer account.
 
+## Settings follow-on
+
+- [x] Complete Phasor Settings as the next product priority, with clear Appearance, Shell, System, Shortcuts, and About pages. System controls use existing optional adapters and explain when a backend is unavailable.
+- [x] Make retained settings schema options take effect: launcher recents, Launcher/Commands/Settings shortcuts, Space count and animation, window focus behavior, and Dock controls.
+- [x] Add a searchable Commands palette on Super+/ with shortcuts configurable in Settings and a direct action to open the shortcut page.
+
 ## Preview first milestone
 
 - [x] Install Preview as a standalone Wayland app with command-line and file-manager open paths.
@@ -68,3 +74,5 @@ The first Preview milestone is complete. Continue toward a broader document and 
 - [x] Exercise Preview with a public multi-field form, a bookmarked and digitally signed PDF, a 96-page annual report, and a 600-dpi scan.
 - [x] Extract freeform selections from images into transparent PNG copies.
 - [x] Exercise printing against a configured CUPS printer queue (temporary local IPP queue; physical output remains unverified).
+- [x] Redact PDF page areas in exported copies, removing the covered page content rather than leaving it recoverable under a markup overlay.
+- [ ] Add Quick Look from the file workflow: select a file, press Space, and preview it without opening the full document window. Cover a broad set of formats with optional backends reported clearly when absent.

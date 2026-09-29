@@ -8,6 +8,28 @@ import re
 from pathlib import Path
 from typing import Any
 
+LAUNCHER_SHORTCUT_CHOICES = (
+    "Super+Space",
+    "Super+Alt+Space",
+    "Super+D",
+    "Super+R",
+    "Alt+Space",
+    "Ctrl+Space",
+)
+COMMAND_SHORTCUT_CHOICES = (
+    "Super+/",
+    "Super+Shift+/",
+    "Ctrl+Alt+Space",
+    "Super+Alt+/",
+    "Ctrl+Shift+P",
+)
+SETTINGS_SHORTCUT_CHOICES = (
+    "Super+,",
+    "Super+Alt+Comma",
+    "Super+Shift+Comma",
+    "Ctrl+Alt+S",
+)
+
 
 def _xdg(name: str, default: str) -> Path:
     return Path(os.environ.get(name, default)).expanduser()
@@ -53,8 +75,11 @@ def default_settings() -> dict[str, Any]:
             "schemaVersion": 1,
             "appearance": {"theme": "dark", "accent": "#8bd5ca", "reducedMotion": False},
             "launcher": {"favorites": [], "showRecents": False},
+            "commands": {"shortcut": "Super+/"},
+            "settings": {"shortcut": "Super+,"},
             "spaces": {"count": 9, "animationDuration": 200},
             "windows": {"focusMode": "click", "raiseOnFocus": True},
+            "dock": {"showCloseButtons": True, "showEmptyState": True},
             "plugins": {},
         }
 
@@ -76,11 +101,11 @@ def load_settings() -> dict[str, Any]:
 def validate_settings(merged: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(merged, dict) or merged.get("schemaVersion") != 1:
         raise ValueError("schemaVersion must be 1")
-    allowed_sections = {"schemaVersion", "appearance", "launcher", "spaces", "windows", "plugins"}
+    allowed_sections = {"schemaVersion", "appearance", "launcher", "commands", "settings", "spaces", "windows", "dock", "plugins"}
     unknown_sections = set(merged) - allowed_sections
     if unknown_sections:
         raise ValueError("Unknown settings sections: " + ", ".join(sorted(unknown_sections)))
-    for section in ("appearance", "launcher", "spaces", "windows", "plugins"):
+    for section in ("appearance", "launcher", "commands", "settings", "spaces", "windows", "dock", "plugins"):
         if not isinstance(merged.get(section), dict):
             raise ValueError(f"Settings key '{section}' must be a JSON object")
     appearance = merged["appearance"]
@@ -100,12 +125,24 @@ def validate_settings(merged: dict[str, Any]) -> dict[str, Any]:
     unknown_launcher = set(launcher) - {"shortcut", "showRecents", "favorites"}
     if unknown_launcher:
         raise ValueError("Unknown launcher settings: " + ", ".join(sorted(unknown_launcher)))
-    if not isinstance(launcher.get("shortcut", "Super+Space"), str):
-        raise ValueError("launcher.shortcut must be a string")
+    if launcher.get("shortcut", "Super+Space") not in LAUNCHER_SHORTCUT_CHOICES:
+        raise ValueError("launcher.shortcut must be one of: " + ", ".join(LAUNCHER_SHORTCUT_CHOICES))
     if not isinstance(launcher.get("showRecents", False), bool):
         raise ValueError("launcher.showRecents must be a boolean")
     if not isinstance(launcher.get("favorites", []), list) or any(not isinstance(item, str) for item in launcher.get("favorites", [])):
         raise ValueError("launcher.favorites must be an array of desktop-entry ids")
+    commands = merged["commands"]
+    unknown_commands = set(commands) - {"shortcut"}
+    if unknown_commands:
+        raise ValueError("Unknown command settings: " + ", ".join(sorted(unknown_commands)))
+    if commands.get("shortcut", "Super+/") not in COMMAND_SHORTCUT_CHOICES:
+        raise ValueError("commands.shortcut must be one of: " + ", ".join(COMMAND_SHORTCUT_CHOICES))
+    settings_shortcuts = merged["settings"]
+    unknown_settings = set(settings_shortcuts) - {"shortcut"}
+    if unknown_settings:
+        raise ValueError("Unknown Settings preferences: " + ", ".join(sorted(unknown_settings)))
+    if settings_shortcuts.get("shortcut", "Super+,") not in SETTINGS_SHORTCUT_CHOICES:
+        raise ValueError("settings.shortcut must be one of: " + ", ".join(SETTINGS_SHORTCUT_CHOICES))
     spaces = merged["spaces"]
     unknown_spaces = set(spaces) - {"count", "animationDuration"}
     if unknown_spaces:
@@ -124,6 +161,13 @@ def validate_settings(merged: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("windows.focusMode must be click or sloppy")
     if not isinstance(windows.get("raiseOnFocus", True), bool):
         raise ValueError("windows.raiseOnFocus must be a boolean")
+    dock = merged["dock"]
+    unknown_dock = set(dock) - {"showCloseButtons", "showEmptyState"}
+    if unknown_dock:
+        raise ValueError("Unknown Dock settings: " + ", ".join(sorted(unknown_dock)))
+    for name in ("showCloseButtons", "showEmptyState"):
+        if not isinstance(dock.get(name, True), bool):
+            raise ValueError(f"dock.{name} must be a boolean")
     if any(not isinstance(plugin_id, str) or not isinstance(value, dict) for plugin_id, value in merged["plugins"].items()):
         raise ValueError("plugins must map plugin ids to JSON objects")
     for plugin_id, preference in merged["plugins"].items():

@@ -39,8 +39,18 @@ for executable in mango mmsg quickshell python3 swaybg; do
     fi
 done
 
-MANGO_CONFIG="${PHASOR_MANGO_CONFIG:-$PHASOR_HOME/config/mango/config.conf}"
-if [[ ! -r "$MANGO_CONFIG" ]]; then printf 'Mango config is not readable: %s\n' "$MANGO_CONFIG"; exit 1; fi
+if [[ -n "${PHASOR_MANGO_CONFIG:-}" ]]; then
+    MANGO_CONFIG="$PHASOR_MANGO_CONFIG"
+    unset PHASOR_MANAGED_MANGO_CONFIG
+    if [[ ! -r "$MANGO_CONFIG" ]]; then printf 'Mango config is not readable: %s\n' "$MANGO_CONFIG"; exit 1; fi
+else
+    MANGO_CONFIG="$PHASOR_RUNTIME/mango-config.conf"
+    export PHASOR_MANAGED_MANGO_CONFIG="$MANGO_CONFIG"
+    if ! PYTHONPATH="$PHASOR_HOME/core${PYTHONPATH:+:$PYTHONPATH}" python3 -m phasor_core.mango_config --output "$MANGO_CONFIG"; then
+        printf 'Could not prepare Phasor settings for Mango.\n'
+        exit 1
+    fi
+fi
 rm -f -- "$PHASOR_RUNTIME/mango-instance" "$PHASOR_RUNTIME/mango-instance.tmp" "$WAYLAND_DISPLAY_FILE" "$PHASOR_RUNTIME/wayland-display.tmp"
 
 mango -c "$MANGO_CONFIG" &
