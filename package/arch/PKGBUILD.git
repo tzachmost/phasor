@@ -9,6 +9,7 @@ depends=('mangowm-git' 'quickshell' 'python' 'python-pillow' 'python-pypdf' 'pyt
 optdepends=(
   'qt6-webengine: PDF viewing in Phasor Preview'
   'cups: printing from Phasor Preview'
+  'python-pyhanko: certificate-based PDF signing in Phasor Preview'
   'playerctl: MPRIS controls'
   'nautilus: reveal files in the default file manager'
   'brightnessctl: brightness controls'

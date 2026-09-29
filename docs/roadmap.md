@@ -49,4 +49,4 @@ The 1.0 checklist is complete. Submitting the stable Arch recipe to the AUR is a
 - [x] Draw visual signatures and include them in export and print copies.
 - [x] Merge PDFs into a new copy, preserving pages and avoiding imported form field name collisions.
 - [x] Print prepared images and PDFs through configured CUPS printers.
-- [ ] Add certificate-based PDF signing.
+- [x] Add certificate-based PDF signing.

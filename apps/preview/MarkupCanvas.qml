@@ -11,6 +11,7 @@ Item {
 
     signal markupChanged()
     signal textRequested(real x, real y)
+    signal signatureBoxRequested(real x1, real y1, real x2, real y2)
 
     function normalized(value, extent) {
         return extent > 0 ? Math.max(0, Math.min(1, value / extent)) : 0
@@ -57,6 +58,19 @@ Item {
                 context.lineTo(mark.points[index][0] * width, mark.points[index][1] * height)
             }
             context.stroke()
+        } else if (mark.type === "signature_box" && mark.x1 !== undefined) {
+            context.save()
+            context.setLineDash([7, 5])
+            context.lineWidth = 2
+            context.strokeStyle = "#1c1d20"
+            context.fillStyle = "rgba(139, 212, 202, 0.18)"
+            const left = Math.min(mark.x1, mark.x2) * width
+            const top = Math.min(mark.y1, mark.y2) * height
+            const rectWidth = Math.abs(mark.x2 - mark.x1) * width
+            const rectHeight = Math.abs(mark.y2 - mark.y1) * height
+            context.fillRect(left, top, rectWidth, rectHeight)
+            context.strokeRect(left, top, rectWidth, rectHeight)
+            context.restore()
         } else if ((mark.type === "rectangle" || mark.type === "highlight") && mark.x1 !== undefined) {
             const left = Math.min(mark.x1, mark.x2) * width
             const top = Math.min(mark.y1, mark.y2) * height
@@ -101,7 +115,7 @@ Item {
                 return
             }
 
-            if (root.activeTool === "rectangle" || root.activeTool === "highlight") {
+            if (root.activeTool === "rectangle" || root.activeTool === "highlight" || root.activeTool === "signature_box") {
                 root.activeAnnotation = {
                     type: root.activeTool,
                     x1: x,
@@ -138,6 +152,16 @@ Item {
 
         onReleased: {
             if (!root.activeAnnotation) return
+            if (root.activeAnnotation.type === "signature_box") {
+                const mark = root.activeAnnotation
+                root.activeAnnotation = null
+                canvas.requestPaint()
+                root.signatureBoxRequested(
+                    Math.min(mark.x1, mark.x2), Math.min(mark.y1, mark.y2),
+                    Math.max(mark.x1, mark.x2), Math.max(mark.y1, mark.y2)
+                )
+                return
+            }
             const next = root.annotations.slice()
             next.push(root.activeAnnotation)
             root.annotations = next

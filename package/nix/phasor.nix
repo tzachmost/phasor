@@ -24,7 +24,7 @@
   polkit_gnome,
 }:
 let
-  previewPython = python3.withPackages (ps: [ ps.pillow ps.pypdf ps.reportlab ]);
+  previewPython = python3.withPackages (ps: [ ps.pillow ps.pypdf ps.reportlab ps.pyhanko ]);
 in
 stdenvNoCC.mkDerivation {
   pname = "phasor-shell";

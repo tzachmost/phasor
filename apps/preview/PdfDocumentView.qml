@@ -21,6 +21,7 @@ Item {
     readonly property int pageCount: pageOrder.length > 0 ? pageOrder.length : Math.max(0, pdfDocument.pageCount)
     readonly property int currentPage: Math.max(0, pageOrder.indexOf(pageView.currentPage))
     readonly property int sourcePage: pageView.currentPage
+    readonly property int pageRotation: ((pageView.rotation % 360) + 360) % 360
     readonly property int zoomPercent: Math.round(pageView.renderScale * 100)
     readonly property string documentStatus: pdfDocument.status === PdfDocument.Ready
         ? pageCount + (pageCount === 1 ? " page" : " pages")
@@ -29,6 +30,7 @@ Item {
 
     signal markupChanged()
     signal textRequested(real x, real y)
+    signal digitalSignatureBoxRequested(int pageIndex, real x1, real y1, real x2, real y2, int rotation)
 
     function loadMarkup(value) {
         pageAnnotations = value && value.pages ? value.pages : ({})
@@ -317,6 +319,9 @@ Item {
                     strokeScale: root.strokeScale
                     onMarkupChanged: root.storeCurrentPageMarkup()
                     onTextRequested: function(x, y) { root.textRequested(x, y) }
+                    onSignatureBoxRequested: function(x1, y1, x2, y2) {
+                        root.digitalSignatureBoxRequested(root.currentPage, x1, y1, x2, y2, root.pageRotation)
+                    }
                 }
             }
         }

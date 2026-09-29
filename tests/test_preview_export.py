@@ -1,6 +1,10 @@
 import io
+import importlib.util
+import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
@@ -12,7 +16,10 @@ try:
 except ImportError as error:
     raise unittest.SkipTest(f"Preview export dependencies are not installed: {error}")
 
-from apps.preview.document_ops import export_image, export_pdf, inspect_pdf_forms, merge_pdfs, print_document
+from apps.preview.document_ops import export_image, export_pdf, inspect_pdf_forms, merge_pdfs, print_document, sign_pdf
+
+
+SIGNING_AVAILABLE = all(importlib.util.find_spec(name) for name in ("pyhanko", "cryptography"))
 
 
 class PreviewExportTests(unittest.TestCase):
@@ -46,6 +53,38 @@ class PreviewExportTests(unittest.TestCase):
         page_canvas.save()
         source.write_bytes(buffer.getvalue())
         return source
+
+    def make_certificate(self, password="test password"):
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        from cryptography.x509.oid import NameOID
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Phasor Preview Test")])
+        now = datetime.now(timezone.utc)
+        certificate = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=1))
+            .not_valid_after(now + timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .sign(key, hashes.SHA256())
+        )
+        encoded = pkcs12.serialize_key_and_certificates(
+            b"phasor-test",
+            key,
+            certificate,
+            None,
+            serialization.BestAvailableEncryption(password.encode("utf-8")),
+        )
+        path = self.root / "signing-test.p12"
+        path.write_bytes(encoded)
+        return path, certificate
 
     def test_image_export_crops_rotates_resizes_and_flattens_markup(self):
         source = self.make_image()
@@ -341,6 +380,177 @@ class PreviewExportTests(unittest.TestCase):
         self.assertIn(b"20 80 m", content)
         self.assertIn(b"180 80 l", content)
         self.assertIn(b"S", content)
+
+    @unittest.skipUnless(SIGNING_AVAILABLE, "Optional pyHanko signing dependency is not installed")
+    def test_certificate_signing_creates_visible_incremental_copy_and_valid_signature(self):
+        from asn1crypto import x509 as asn1_x509
+        from cryptography.hazmat.primitives.serialization import Encoding
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        from pyhanko.sign.validation import validate_pdf_signature
+        from pyhanko_certvalidator import ValidationContext
+
+        source = self.root / "source.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(300, 200))
+        page_canvas.drawString(20, 170, "Keep the original document content")
+        page_canvas.showPage()
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        original_bytes = source.read_bytes()
+        certificate_path, certificate = self.make_certificate()
+        output = self.root / "signed.pdf"
+
+        result = sign_pdf(
+            str(source),
+            str(output),
+            str(certificate_path),
+            {
+                "page_index": 0,
+                "box": [0.1, 0.1, 0.55, 0.35],
+                "rotation": 0,
+                "reason": "Approved",
+                "location": "Warsaw",
+                "markup": {"version": 1, "kind": "pdf", "pages": {}},
+            },
+            "test password",
+        )
+
+        self.assertEqual(result["page"], 1)
+        self.assertEqual(source.read_bytes(), original_bytes)
+        self.assertTrue(output.read_bytes().startswith(original_bytes))
+        with output.open("rb") as stream:
+            signed_pdf = PdfFileReader(stream)
+            self.assertEqual(len(signed_pdf.embedded_signatures), 1)
+            signature = signed_pdf.embedded_signatures[0]
+            status = validate_pdf_signature(
+                signature,
+                signer_validation_context=ValidationContext(
+                    trust_roots=[asn1_x509.Certificate.load(certificate.public_bytes(Encoding.DER))]
+                ),
+            )
+            self.assertTrue(status.intact)
+            self.assertTrue(status.valid)
+            self.assertTrue(status.trusted)
+            self.assertEqual(signature.field_name, "PhasorSignature")
+
+        signed_page = PdfReader(output).pages[0]
+        signature_widget = next(
+            reference.get_object()
+            for reference in signed_page.get("/Annots", [])
+            if reference.get_object().get("/T") == "PhasorSignature"
+        )
+        self.assertEqual(tuple(round(float(value)) for value in signature_widget["/Rect"]), (30, 130, 165, 180))
+        self.assertIsNotNone(signature_widget.get("/AP"))
+
+        signed_reader = PdfReader(output)
+        self.assertIn("Keep the original document content", signed_reader.pages[0].extract_text())
+
+    @unittest.skipUnless(SIGNING_AVAILABLE, "Optional pyHanko signing dependency is not installed")
+    def test_certificate_signing_applies_pending_edits_before_signing(self):
+        source = self.root / "prepared-source.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(300, 200))
+        page_canvas.drawString(20, 170, "Before markup")
+        page_canvas.showPage()
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        certificate_path, _ = self.make_certificate()
+        output = self.root / "prepared-signed.pdf"
+        options = {
+            "page_index": 0,
+            "box": [0.1, 0.1, 0.55, 0.35],
+            "rotation": 0,
+            "markup": {
+                "version": 1,
+                "kind": "pdf",
+                "pages": {"0": [{"type": "text", "x": 0.1, "y": 0.5, "text": "Prepared note", "color": "#102030"}]},
+                "page_order": [0],
+                "form_values": {},
+            },
+        }
+
+        from apps.preview import document_ops
+
+        output_json = io.StringIO()
+        command = ["document_ops.py", "sign", str(source), str(output), str(certificate_path)]
+        with patch("apps.preview.document_ops.sys.stdin", io.StringIO(json.dumps({"password": "test password", "options": options}) + "\n")):
+            with redirect_stdout(output_json):
+                exit_code = document_ops.main(command)
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(json.loads(output_json.getvalue())["ok"])
+        self.assertNotIn("test password", command)
+
+        output_reader = PdfReader(output)
+        self.assertIn("Before markup", output_reader.pages[0].extract_text())
+        self.assertIn("Prepared note", output_reader.pages[0].extract_text())
+        self.assertEqual(len(output_reader.get_fields()), 1)
+        self.assertEqual(len(PdfReader(source).get_fields() or {}), 0)
+
+    @unittest.skipUnless(SIGNING_AVAILABLE, "Optional pyHanko signing dependency is not installed")
+    def test_certificate_signing_rejects_wrong_password_and_preserves_existing_signatures(self):
+        source = self.root / "unsigned.pdf"
+        from asn1crypto import x509 as asn1_x509
+        from cryptography.hazmat.primitives.serialization import Encoding
+        from pyhanko_certvalidator import ValidationContext
+        from pyhanko.sign.validation import validate_pdf_signature
+
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(300, 200))
+        page_canvas.showPage()
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        certificate_path, certificate = self.make_certificate()
+        base_options = {
+            "page_index": 0,
+            "box": [0.1, 0.1, 0.55, 0.35],
+            "rotation": 0,
+            "markup": {"version": 1, "kind": "pdf", "pages": {}},
+        }
+        failed_output = self.root / "failed.pdf"
+        with self.assertRaisesRegex(ValueError, "Check the file and password"):
+            sign_pdf(str(source), str(failed_output), str(certificate_path), base_options, "wrong")
+        self.assertFalse(failed_output.exists())
+
+        signed = self.root / "already-signed.pdf"
+        sign_pdf(str(source), str(signed), str(certificate_path), base_options, "test password")
+        validation_context = ValidationContext(
+            trust_roots=[asn1_x509.Certificate.load(certificate.public_bytes(Encoding.DER))]
+        )
+        signature_count = len(PdfReader(signed).get_fields() or {})
+        edited_options = dict(base_options)
+        edited_options["markup"] = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {"0": [{"type": "text", "x": 0.1, "y": 0.3, "text": "Would break signature", "color": "#102030"}]},
+        }
+        with self.assertRaisesRegex(ValueError, "already has a digital signature"):
+            sign_pdf(str(signed), str(self.root / "invalidated.pdf"), str(certificate_path), edited_options, "test password")
+        self.assertEqual(len(PdfReader(signed).get_fields() or {}), signature_count)
+
+        countersigned = self.root / "countersigned.pdf"
+        sign_pdf(str(signed), str(countersigned), str(certificate_path), base_options, "test password")
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        with countersigned.open("rb") as stream:
+            signed_pdf = PdfFileReader(stream)
+            self.assertEqual(len(signed_pdf.embedded_signatures), 2)
+            self.assertTrue(validate_pdf_signature(signed_pdf.embedded_signatures[0], signer_validation_context=validation_context).intact)
+            self.assertTrue(validate_pdf_signature(signed_pdf.embedded_signatures[1], signer_validation_context=validation_context).intact)
+
+    def test_signature_box_maps_rotated_offset_cropbox_coordinates(self):
+        from pypdf import PdfReader, PdfWriter
+        from apps.preview.document_ops import _signature_box
+
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=300, height=200)
+        page.cropbox.lower_left = (25, 35)
+        page.cropbox.upper_right = (275, 185)
+        page.rotate(90)
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        buffer.seek(0)
+        rotated_page = PdfReader(buffer).pages[0]
+
+        self.assertEqual(_signature_box(rotated_page, [0.1, 0.1, 0.5, 0.5], 0), (150.0, 50.0, 250.0, 110.0))
 
     def test_pdf_merge_appends_documents_after_the_prepared_current_pdf(self):
         first = self.root / "first.pdf"

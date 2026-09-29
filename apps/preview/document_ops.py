@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -619,6 +620,245 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
     return {"ok": True, "path": str(output), "pages": len(page_order)}
 
 
+def _preview_signing_site_paths() -> list[Path]:
+    configured = os.environ.get("PHASOR_PREVIEW_SIGNING_VENV")
+    if configured:
+        root = Path(configured).expanduser()
+    else:
+        data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+        root = data_home / "phasor-preview" / "signing"
+    return sorted((root / "lib").glob("python*/site-packages"), reverse=True)
+
+
+def _pyhanko_signing_stack():
+    try:
+        from pyhanko import stamp
+        from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+        from pyhanko.sign import fields, signers
+    except ImportError:
+        for path in _preview_signing_site_paths():
+            if path.is_dir() and str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        try:
+            from pyhanko import stamp
+            from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+            from pyhanko.sign import fields, signers
+        except ImportError as error:
+            raise ValueError(
+                "Certificate signing needs pyHanko. Install python-pyhanko, or follow the optional setup in docs/preview.md."
+            ) from error
+    return stamp, IncrementalPdfFileWriter, fields, signers
+
+
+def _pdf_has_signatures(reader: Any) -> bool:
+    from pypdf.generic import ArrayObject, DictionaryObject
+
+    for field in (reader.get_fields() or {}).values():
+        if str(field.get("/FT", "")) != "/Sig":
+            continue
+        value = field.get("/V")
+        if value is None:
+            continue
+        value = value.get_object() if hasattr(value, "get_object") else value
+        if not isinstance(value, DictionaryObject):
+            continue
+        byte_range = value.get("/ByteRange")
+        if isinstance(byte_range, ArrayObject) and len(byte_range) >= 4:
+            return True
+    return False
+
+
+def _has_pending_pdf_edits(markup: dict[str, Any], page_count: int) -> bool:
+    if any(annotations for annotations in markup.get("pages", {}).values()):
+        return True
+    if _validated_pdf_order(markup.get("page_order"), page_count) != list(range(page_count)):
+        return True
+    if any(markup.get("page_rotations", {}).values()):
+        return True
+    return bool(markup.get("form_values"))
+
+
+def _signature_box(page: Any, box: Any, viewer_rotation: Any) -> tuple[float, float, float, float]:
+    if not isinstance(box, list) or len(box) != 4:
+        raise ValueError("Drag on the PDF page to set a signature box")
+    left, top, right, bottom = (
+        _normalized(value, "Signature box coordinate") for value in box
+    )
+    if left > right or top > bottom:
+        raise ValueError("Signature box corners are invalid")
+    if right - left < 0.05 or bottom - top < 0.035:
+        raise ValueError("Make the signature box at least 5% of the page width and 3.5% of its height")
+    if isinstance(viewer_rotation, bool) or not isinstance(viewer_rotation, int) or viewer_rotation not in {0, 90, 180, 270}:
+        raise ValueError("Page rotation must be 0, 90, 180, or 270 degrees")
+
+    crop = page.cropbox
+    page_width = float(crop.width)
+    page_height = float(crop.height)
+    if page_width <= 0 or page_height <= 0:
+        raise ValueError("The selected PDF page has no visible area")
+    intrinsic_rotation = int(page.get("/Rotate", 0) or 0) % 360
+    if intrinsic_rotation not in {0, 90, 180, 270}:
+        raise ValueError("This PDF page uses an unsupported rotation")
+    rotation = (intrinsic_rotation + viewer_rotation) % 360
+
+    def to_pdf(x: float, y: float) -> tuple[float, float]:
+        if rotation == 0:
+            normal_x, normal_y = x, 1 - y
+        elif rotation == 90:
+            normal_x, normal_y = 1 - y, x
+        elif rotation == 180:
+            normal_x, normal_y = 1 - x, y
+        else:
+            normal_x, normal_y = y, 1 - x
+        return (
+            float(crop.left) + normal_x * page_width,
+            float(crop.bottom) + normal_y * page_height,
+        )
+
+    corners = [
+        to_pdf(left, top),
+        to_pdf(right, top),
+        to_pdf(left, bottom),
+        to_pdf(right, bottom),
+    ]
+    x_values, y_values = zip(*corners)
+    result = (min(x_values), min(y_values), max(x_values), max(y_values))
+    if result[2] - result[0] < 36 or result[3] - result[1] < 22:
+        raise ValueError("Make the signature box at least 36 by 22 PDF points")
+    return result
+
+
+def sign_pdf(
+    source_value: str,
+    output_value: str,
+    certificate_value: str,
+    options: dict[str, Any],
+    password: str,
+) -> dict[str, Any]:
+    try:
+        from pypdf import PdfReader
+    except ImportError as error:
+        raise ValueError("PDF signing needs pypdf. Install the python-pypdf package.") from error
+    if not isinstance(options, dict):
+        raise ValueError("Signature options must be an object")
+    if not isinstance(password, str) or len(password) > 4096:
+        raise ValueError("The certificate password is invalid or too long")
+    source = _source_path(source_value)
+    certificate = _source_path(certificate_value)
+    output = _output_path(source, output_value, ".pdf")
+    if output.resolve() == certificate.resolve():
+        raise ValueError("Choose an output file separate from the certificate")
+    markup = validate_payload(options.get("markup", {"version": 1, "kind": "pdf"}))
+    if markup["kind"] != "pdf":
+        raise ValueError("Certificate signing requires a PDF document")
+
+    try:
+        source_reader = PdfReader(str(source), strict=False)
+        if source_reader.is_encrypted:
+            raise ValueError("Password-protected PDFs cannot be signed in Preview yet")
+        page_count = len(source_reader.pages)
+        if page_count < 1:
+            raise ValueError("This PDF has no pages to sign")
+        page_index = options.get("page_index")
+        if isinstance(page_index, bool) or not isinstance(page_index, int) or not 0 <= page_index < page_count:
+            raise ValueError("The selected signature page is no longer available")
+        already_signed = _pdf_has_signatures(source_reader)
+        pending_edits = _has_pending_pdf_edits(markup, page_count)
+        if already_signed and pending_edits:
+            raise ValueError(
+                "This PDF already has a digital signature. Exporting pending edits would invalidate it; sign an unchanged copy or export the edits separately first."
+            )
+        box = options.get("box")
+        if not isinstance(box, list) or len(box) != 4:
+            raise ValueError("Drag on the PDF page to set a signature box")
+        normalized_box = [_normalized(value, "Signature box coordinate") for value in box]
+        if (
+            normalized_box[0] > normalized_box[2]
+            or normalized_box[1] > normalized_box[3]
+            or normalized_box[2] - normalized_box[0] < 0.05
+            or normalized_box[3] - normalized_box[1] < 0.035
+        ):
+            raise ValueError("Make the signature box large enough to display a certificate signature")
+        viewer_rotation = options.get("rotation", 0)
+        if isinstance(viewer_rotation, bool) or not isinstance(viewer_rotation, int) or viewer_rotation not in {0, 90, 180, 270}:
+            raise ValueError("Page rotation must be 0, 90, 180, or 270 degrees")
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError(f"Could not inspect this PDF for signing: {error}") from error
+
+    stamp, IncrementalPdfFileWriter, fields, signers = _pyhanko_signing_stack()
+    previous_logging_disable = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    try:
+        signer = signers.SimpleSigner.load_pkcs12(
+            str(certificate), passphrase=password.encode("utf-8") if password else None
+        )
+    except Exception as error:
+        raise ValueError("Could not open the PKCS#12 certificate. Check the file and password.") from error
+    finally:
+        logging.disable(previous_logging_disable)
+    if signer is None:
+        raise ValueError("Could not open the PKCS#12 certificate. Check the file and password.")
+
+    reason = options.get("reason", "")
+    location = options.get("location", "")
+    if not isinstance(reason, str) or len(reason) > 256:
+        raise ValueError("The signing reason must be 256 characters or fewer")
+    if not isinstance(location, str) or len(location) > 256:
+        raise ValueError("The signing location must be 256 characters or fewer")
+
+    def prepare_and_sign(signature_source: Path, selected_page: int) -> None:
+        signature_reader = PdfReader(str(signature_source), strict=False)
+        pdf_box = _signature_box(
+            signature_reader.pages[selected_page], normalized_box, viewer_rotation
+        )
+        existing_names = set((signature_reader.get_fields() or {}).keys())
+        with signature_source.open("rb") as source_stream:
+            writer = IncrementalPdfFileWriter(source_stream)
+            field_name = "PhasorSignature"
+            suffix = 2
+            while field_name in existing_names:
+                field_name = f"PhasorSignature{suffix}"
+                suffix += 1
+            metadata = signers.PdfSignatureMetadata(
+                field_name=field_name,
+                md_algorithm="sha256",
+                reason=reason or None,
+                location=location or None,
+            )
+            signature_writer = signers.PdfSigner(
+                metadata,
+                signer=signer,
+                stamp_style=stamp.TextStampStyle(
+                    stamp_text="Digitally signed by %(signer)s\n%(ts)s"
+                ),
+                new_field_spec=fields.SigFieldSpec(
+                    sig_field_name=field_name,
+                    on_page=selected_page,
+                    box=tuple(round(value) for value in pdf_box),
+                ),
+            )
+            _atomic_save(
+                output,
+                lambda stream: signature_writer.sign_pdf(writer, output=stream),
+            )
+
+    try:
+        if pending_edits:
+            with tempfile.TemporaryDirectory(prefix="phasor-preview-sign-") as directory:
+                prepared = Path(directory) / "prepared.pdf"
+                export_pdf(str(source), str(prepared), {"markup": markup})
+                prepare_and_sign(prepared, page_index)
+        else:
+            prepare_and_sign(source, page_index)
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError(f"Could not digitally sign this PDF: {error}") from error
+    return {"ok": True, "path": str(output), "page": page_index + 1}
+
+
 def merge_pdfs(source_values: list[str], output_value: str, options: dict[str, Any]) -> dict[str, Any]:
     try:
         from pypdf import PdfReader, PdfWriter
@@ -822,8 +1062,23 @@ def main(argv: list[str]) -> int:
             if not isinstance(options, dict):
                 raise ValueError("Export options must be an object")
             result = export_image(argv[2], argv[3], options) if argv[1] == "image" else export_pdf(argv[2], argv[3], options)
+        elif len(argv) == 5 and argv[1] == "sign":
+            signing_input = sys.stdin.readline(5 * 1024 * 1024 + 1)
+            if not signing_input.endswith("\n") or len(signing_input) > 5 * 1024 * 1024:
+                raise ValueError("The signing input is missing or too large")
+            payload = json.loads(signing_input)
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(payload.get("password"), str)
+                or not isinstance(payload.get("options"), dict)
+            ):
+                raise ValueError("The signing input is invalid")
+            password = payload["password"]
+            if len(password) > 4096:
+                raise ValueError("The certificate password is too long")
+            result = sign_pdf(argv[2], argv[3], argv[4], payload["options"], password)
         else:
-            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON | merge OUTPUT SOURCES_JSON OPTIONS_JSON | image|pdf SOURCE OUTPUT OPTIONS_JSON")
+            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON | merge OUTPUT SOURCES_JSON OPTIONS_JSON | image|pdf SOURCE OUTPUT OPTIONS_JSON | sign SOURCE OUTPUT CERTIFICATE (signing JSON on stdin)")
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("ok", True) else 1
     except (OSError, ValueError, json.JSONDecodeError) as error:

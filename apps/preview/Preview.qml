@@ -37,6 +37,11 @@ ApplicationWindow {
     property string defaultPrinter: ""
     property string printerStatus: ""
     property var mergeInputPaths: []
+    property int signingPageIndex: -1
+    property int signingRotation: 0
+    property var signingBox: []
+    property string signingPasswordPending: ""
+    property var signingOptionsPending: ({})
     property var loadedMarkup: ({})
     property var pendingTextPosition: ({ x: 0, y: 0 })
     property string helperPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/markup_store.py"
@@ -61,6 +66,13 @@ ApplicationWindow {
     function openFile(value) {
         const incoming = String(value || "")
         if (incoming.length === 0) return
+        signingOptionsDialog.close()
+        signingCertificateDialog.close()
+        signingOutputDialog.close()
+        signingPasswordInput.clear()
+        signingPasswordPending = ""
+        signingOptionsPending = ({})
+        signingPageIndex = -1
         const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(incoming)
         sourceUrl = isUrl ? incoming : urlFromPath(incoming)
         sourcePath = pathFromUrl(sourceUrl)
@@ -154,6 +166,52 @@ ApplicationWindow {
     function beginMerge() {
         if (!root.isPdf || !root.sourcePath || !viewerLoader.item || viewerLoader.item.pageCount < 1) return
         mergeInputDialog.open()
+    }
+
+    function beginCertificateSigning() {
+        if (!root.isPdf || !viewerLoader.item || viewerLoader.item.currentPage < 0) return
+        root.activeTool = "signature_box"
+        root.saveStatus = "Drag on the page to place the digital signature."
+    }
+
+    function collectSignatureBox(pageIndex, x1, y1, x2, y2, rotation) {
+        if (pageIndex < 0) return
+        root.signingPageIndex = pageIndex
+        root.signingRotation = rotation
+        root.signingBox = [x1, y1, x2, y2]
+        root.activeTool = "select"
+        signingCertificateDialog.open()
+    }
+
+    function signTo(value) {
+        if (!root.isPdf || !viewerLoader.item || root.signingPageIndex < 0) return
+        if (signProcess.running) {
+            root.saveStatus = "A PDF signing operation is already running."
+            return
+        }
+        let output = root.pathFromUrl(value)
+        if (!/\.pdf$/i.test(output)) output += ".pdf"
+        const options = {
+            markup: viewerLoader.item.serializeMarkup(),
+            page_index: root.signingPageIndex,
+            box: root.signingBox,
+            rotation: root.signingRotation,
+            reason: signingReasonInput.text,
+            location: signingLocationInput.text
+        }
+        root.signingPasswordPending = signingPasswordInput.text
+        root.signingOptionsPending = options
+        signingPasswordInput.clear()
+        signProcess.exec([
+            "python3",
+            root.documentOpsPath,
+            "sign",
+            root.sourcePath,
+            output,
+            root.pathFromUrl(signingCertificateDialog.selectedFile)
+        ])
+        signingOptionsDialog.close()
+        root.saveStatus = "Signing a new PDF copy…"
     }
 
     function prepareMerge(files) {
@@ -285,6 +343,24 @@ ApplicationWindow {
         onAccepted: root.mergeTo(selectedFile)
     }
 
+    FileDialog {
+        id: signingCertificateDialog
+        title: "Choose a signing certificate"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["PKCS#12 certificates (*.p12 *.pfx)", "All files (*)"]
+        onAccepted: signingOptionsDialog.open()
+    }
+
+    FileDialog {
+        id: signingOutputDialog
+        title: "Save signed PDF copy"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: ["PDF document (*.pdf)"]
+        onAccepted: root.signTo(selectedFile)
+        onRejected: signingPasswordInput.clear()
+    }
+
     onSourceUrlChanged: {
         if (viewerLoader.item) viewerLoader.item.source = sourceUrl
     }
@@ -299,6 +375,14 @@ ApplicationWindow {
     }
     onSearchTextChanged: {
         if (viewerLoader.item && viewerLoader.item.searchText !== undefined) viewerLoader.item.searchText = searchText
+    }
+
+    Connections {
+        target: viewerLoader.item
+        ignoreUnknownSignals: true
+        function onDigitalSignatureBoxRequested(pageIndex, x1, y1, x2, y2, rotation) {
+            root.collectSignatureBox(pageIndex, x1, y1, x2, y2, rotation)
+        }
     }
 
     Process {
@@ -391,6 +475,37 @@ ApplicationWindow {
             }
         }
         stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview merge:", text) }
+    }
+
+    Process {
+        id: signProcess
+        command: ["python3"]
+        stdinEnabled: true
+        onStarted: {
+            signProcess.write(JSON.stringify({
+                password: root.signingPasswordPending,
+                options: root.signingOptionsPending
+            }) + "\n")
+            root.signingPasswordPending = ""
+            root.signingOptionsPending = ({})
+        }
+        onExited: {
+            root.signingPasswordPending = ""
+            root.signingOptionsPending = ({})
+        }
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.saveStatus = result.ok
+                        ? "Digitally signed copy saved · page " + result.page + " · " + root.nameFromPath(result.path)
+                        : (result.error || "Could not sign this PDF")
+                } catch (error) {
+                    root.saveStatus = "Could not sign this PDF"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview PDF signing:", text) }
     }
 
     Process {
@@ -499,6 +614,7 @@ ApplicationWindow {
                     id: documentToolsMenu
                     MenuItem { text: "Fill PDF forms…"; enabled: root.isPdf; onTriggered: formsDialog.open() }
                     MenuItem { text: root.activeTool === "signature" ? "Stop signing" : "Draw signature"; checkable: true; checked: root.activeTool === "signature"; onTriggered: root.activeTool = root.activeTool === "signature" ? "select" : "signature" }
+                    MenuItem { text: "Sign with certificate…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0 && !signProcess.running); onTriggered: root.beginCertificateSigning() }
                     MenuSeparator { }
                     MenuItem { text: "Merge PDFs…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0); onTriggered: root.beginMerge() }
                     MenuItem { text: "Print…"; enabled: Boolean(root.sourcePath && viewerLoader.item); onTriggered: root.openPrintDialog() }
@@ -683,7 +799,7 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     text: root.sourcePath && viewerLoader.item
-                        ? viewerLoader.item.documentStatus + (root.activeTool === "signature" ? " · Draw signature" : root.isPdf ? " · PDF" : root.activeTool === "crop" ? " · Drag to select crop" : " · Image")
+                        ? viewerLoader.item.documentStatus + (root.activeTool === "signature" ? " · Draw signature" : root.activeTool === "signature_box" ? " · Drag to place certificate signature" : root.isPdf ? " · PDF" : root.activeTool === "crop" ? " · Drag to select crop" : " · Image")
                         : "PDF · PNG · JPEG · SVG · WebP"
                     color: Theme.Tokens.textSecondary
                     font.pixelSize: 10
@@ -691,7 +807,7 @@ ApplicationWindow {
                 }
                 Text {
                     text: root.saveStatus
-                    color: root.saveStatus.indexOf("Could not") === 0 || root.saveStatus.indexOf("needs") >= 0 ? Theme.Tokens.warning : Theme.Tokens.textSecondary
+                    color: root.saveStatus.indexOf("Could not") === 0 || root.saveStatus.indexOf("needs") >= 0 || root.saveStatus.indexOf("already has a digital signature") >= 0 ? Theme.Tokens.warning : Theme.Tokens.textSecondary
                     font.pixelSize: 10
                     elide: Text.ElideRight
                 }
@@ -862,6 +978,72 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    Dialog {
+        id: signingOptionsDialog
+        title: "Sign PDF with certificate"
+        modal: true
+        standardButtons: Dialog.Cancel
+        onOpened: signingPasswordInput.forceActiveFocus()
+        onAccepted: signingOutputDialog.open()
+        onRejected: signingPasswordInput.clear()
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 430
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: "Preview creates a visible certificate signature in a new PDF copy. It leaves the source untouched. The signature password is sent to the local signing helper and is not saved."
+                color: Theme.Tokens.textSecondary
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Certificate: " + root.nameFromPath(root.pathFromUrl(signingCertificateDialog.selectedFile))
+                color: Theme.Tokens.textPrimary
+                font.pixelSize: 12
+                elide: Text.ElideMiddle
+            }
+
+            TextField {
+                id: signingPasswordInput
+                Layout.fillWidth: true
+                placeholderText: "Certificate password (if required)"
+                echoMode: TextInput.Password
+                passwordCharacter: "●"
+                selectByMouse: true
+                onAccepted: signingOptionsDialog.accept()
+            }
+
+            TextField {
+                id: signingReasonInput
+                Layout.fillWidth: true
+                placeholderText: "Reason (optional)"
+                maximumLength: 256
+            }
+
+            TextField {
+                id: signingLocationInput
+                Layout.fillWidth: true
+                placeholderText: "Location (optional)"
+                maximumLength: 256
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { text: "Choose output and sign…"; highlighted: true; onClicked: signingOptionsDialog.accept() }
             }
         }
     }
