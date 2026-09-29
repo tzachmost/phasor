@@ -25,6 +25,9 @@ fi
 for name in phasorctl phasor-core phasor-doctor phasor-session; do
     target="/usr/bin/$name"
     source="$DEST/scripts/$name"
+    if [[ "$name" == phasor-session ]]; then
+        source="$DEST/session/phasor-session"
+    fi
     if [[ -e "$target" || -L "$target" ]]; then
         if [[ ! -L "$target" || "$(readlink -f "$target")" != "$source" ]]; then
             printf 'Refusing to replace an existing unmanaged command: %s\n' "$target" >&2
