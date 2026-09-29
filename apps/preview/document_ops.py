@@ -491,6 +491,8 @@ def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
             raw_value = field.get("/V", "")
             if isinstance(raw_value, (list, tuple)):
                 value: str | list[str] = [str(item) for item in raw_value]
+            elif kind == "multi_choice" and raw_value:
+                value = [str(raw_value)]
             else:
                 value = str(raw_value)
             result.append({
@@ -523,6 +525,8 @@ def _validated_pdf_form_values(reader: Any, values: dict[str, Any]) -> dict[str,
         field = fields[name]
         field_type = str(field.get("/FT", ""))
         flags = int(field.get("/Ff", 0))
+        if flags & 1:
+            raise ValueError(f"The field {name} is read-only")
         if field_type == "/Btn":
             if not isinstance(value, str):
                 raise ValueError(f"The value for {name} must be a checkbox or radio option")
@@ -620,6 +624,24 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
     return {"ok": True, "path": str(output), "pages": len(page_order)}
 
 
+def _pdf_has_signatures(reader: Any) -> bool:
+    from pypdf.generic import ArrayObject, DictionaryObject
+
+    for field in (reader.get_fields() or {}).values():
+        if str(field.get("/FT", "")) != "/Sig":
+            continue
+        value = field.get("/V")
+        if value is None:
+            continue
+        value = value.get_object() if hasattr(value, "get_object") else value
+        if not isinstance(value, DictionaryObject):
+            continue
+        byte_range = value.get("/ByteRange")
+        if isinstance(byte_range, ArrayObject) and len(byte_range) >= 4:
+            return True
+    return False
+
+
 def _preview_signing_site_paths() -> list[Path]:
     configured = os.environ.get("PHASOR_PREVIEW_SIGNING_VENV")
     if configured:
@@ -648,24 +670,6 @@ def _pyhanko_signing_stack():
                 "Certificate signing needs pyHanko. Install python-pyhanko, or follow the optional setup in docs/preview.md."
             ) from error
     return stamp, IncrementalPdfFileWriter, fields, signers
-
-
-def _pdf_has_signatures(reader: Any) -> bool:
-    from pypdf.generic import ArrayObject, DictionaryObject
-
-    for field in (reader.get_fields() or {}).values():
-        if str(field.get("/FT", "")) != "/Sig":
-            continue
-        value = field.get("/V")
-        if value is None:
-            continue
-        value = value.get_object() if hasattr(value, "get_object") else value
-        if not isinstance(value, DictionaryObject):
-            continue
-        byte_range = value.get("/ByteRange")
-        if isinstance(byte_range, ArrayObject) and len(byte_range) >= 4:
-            return True
-    return False
 
 
 def _has_pending_pdf_edits(markup: dict[str, Any], page_count: int) -> bool:
@@ -880,6 +884,15 @@ def merge_pdfs(source_values: list[str], output_value: str, options: dict[str, A
     total_pages = 0
     writer = PdfWriter()
     try:
+        with sources[0].open("rb") as source_stream:
+            original_reader = PdfReader(source_stream, strict=False)
+            if original_reader.is_encrypted:
+                raise ValueError(f"Password-protected PDFs cannot be merged ({sources[0].name})")
+            if _pdf_has_signatures(original_reader):
+                raise ValueError(
+                    f"Cannot merge {sources[0].name}: it contains a digital signature, which merging would invalidate"
+                )
+
         with tempfile.TemporaryDirectory(prefix="phasor-preview-merge-") as temporary:
             prepared_first = Path(temporary) / "phasor-merge-first.pdf"
             export_pdf(str(sources[0]), str(prepared_first), {"markup": markup})
@@ -890,6 +903,10 @@ def merge_pdfs(source_values: list[str], output_value: str, options: dict[str, A
                     reader = PdfReader(stream, strict=False)
                     if reader.is_encrypted:
                         raise ValueError(f"Password-protected PDFs cannot be merged ({path.name})")
+                    if document_index > 1 and _pdf_has_signatures(reader):
+                        raise ValueError(
+                            f"Cannot merge {path.name}: it contains a digital signature, which merging would invalidate"
+                        )
                     page_count = len(reader.pages)
                     if page_count < 1:
                         raise ValueError(f"The PDF has no pages to merge ({path.name})")
@@ -1021,6 +1038,19 @@ def print_document(source_value: str, options: dict[str, Any]) -> dict[str, Any]
             _image_pdf(image_path, pdf_path)
 
         command = [lp, "-n", str(copies)]
+        if page_range:
+            from pypdf import PdfReader
+
+            prepared_page_count = len(PdfReader(str(pdf_path), strict=False).pages)
+            last_requested_page = max(
+                int(page_number)
+                for page_part in page_range.split(",")
+                for page_number in page_part.split("-")
+            )
+            if last_requested_page > prepared_page_count:
+                raise ValueError(
+                    f"Page range exceeds the {prepared_page_count}-page prepared document"
+                )
         if printer:
             command.extend(["-d", printer])
         if page_range:

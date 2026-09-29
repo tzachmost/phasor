@@ -42,6 +42,16 @@ class PreviewExportTests(unittest.TestCase):
         page_canvas.acroForm.textfield(
             name="full_name", tooltip="Full name", x=40, y=140, width=180, height=24, value=""
         )
+        page_canvas.acroForm.textfield(
+            name="issued_by",
+            tooltip="Issued by",
+            x=40,
+            y=110,
+            width=180,
+            height=20,
+            value="Phasor Office",
+            fieldFlags="readOnly",
+        )
         page_canvas.acroForm.checkbox(
             name="accept_terms", tooltip="Accept terms", x=40, y=100, size=14, checked=False
         )
@@ -49,9 +59,58 @@ class PreviewExportTests(unittest.TestCase):
             name="country", tooltip="Country", x=40, y=55, width=120, height=22,
             options=["Poland", "Canada"], value="Poland",
         )
+        page_canvas.acroForm.listbox(
+            name="favorite_drinks",
+            tooltip="Favorite drinks",
+            x=185,
+            y=12,
+            width=100,
+            height=48,
+            options=["Tea", "Coffee", "Water"],
+            value="Tea",
+            fieldFlags="multiSelect",
+        )
         page_canvas.showPage()
         page_canvas.save()
         source.write_bytes(buffer.getvalue())
+        return source
+
+    def make_signature_fixture(self, name="signed.pdf"):
+        """Make a compact structural fixture for signature detection."""
+        from pypdf import PdfWriter
+        from pypdf.generic import (
+            ArrayObject,
+            ByteStringObject,
+            DictionaryObject,
+            NameObject,
+            NumberObject,
+            TextStringObject,
+        )
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=100)
+        signature = DictionaryObject({
+            NameObject("/Type"): NameObject("/Sig"),
+            NameObject("/ByteRange"): ArrayObject(
+                [NumberObject(0), NumberObject(10), NumberObject(20), NumberObject(30)]
+            ),
+            NameObject("/Contents"): ByteStringObject(b"signature fixture"),
+        })
+        signature_reference = writer._add_object(signature)
+        field = DictionaryObject({
+            NameObject("/FT"): NameObject("/Sig"),
+            NameObject("/T"): TextStringObject("ExistingSignature"),
+            NameObject("/V"): signature_reference,
+        })
+        writer._root_object.update({
+            NameObject("/AcroForm"): DictionaryObject({
+                NameObject("/Fields"): ArrayObject([writer._add_object(field)]),
+                NameObject("/SigFlags"): NumberObject(3),
+            })
+        })
+        source = self.root / name
+        with source.open("wb") as stream:
+            writer.write(stream)
         return source
 
     def make_certificate(self, password="test password"):
@@ -311,8 +370,11 @@ class PreviewExportTests(unittest.TestCase):
         form_info = inspect_pdf_forms(str(source))
         fields = {field["name"]: field for field in form_info["fields"]}
         self.assertEqual(fields["full_name"]["type"], "text")
+        self.assertTrue(fields["issued_by"]["read_only"])
         self.assertEqual(fields["accept_terms"]["type"], "checkbox")
         self.assertEqual(fields["country"]["type"], "choice")
+        self.assertEqual(fields["favorite_drinks"]["type"], "multi_choice")
+        self.assertEqual(fields["favorite_drinks"]["value"], ["Tea"])
         self.assertEqual(fields["full_name"]["pages"], [1])
 
         export_pdf(
@@ -327,6 +389,7 @@ class PreviewExportTests(unittest.TestCase):
                         "full_name": "Ada Lovelace",
                         "accept_terms": "/Yes",
                         "country": "Canada",
+                        "favorite_drinks": ["Coffee", "Water"],
                     },
                 }
             },
@@ -336,6 +399,7 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(values["full_name"]["/V"], "Ada Lovelace")
         self.assertEqual(str(values["accept_terms"]["/V"]), "/Yes")
         self.assertEqual(values["country"]["/V"], "Canada")
+        self.assertEqual(values["favorite_drinks"]["/V"], ["Coffee", "Water"])
         output_page = PdfReader(output).pages[0]
         widgets = {
             str(reference.get_object().get("/T")): reference.get_object()
@@ -345,6 +409,27 @@ class PreviewExportTests(unittest.TestCase):
         self.assertIn(b"(Ada Lovelace) Tj", name_appearance.get_data())
         self.assertEqual(str(widgets["accept_terms"].get("/AS")), "/Yes")
         self.assertEqual(PdfReader(source).get_fields()["full_name"]["/V"], "")
+        self.assertEqual(PdfReader(source).get_fields()["issued_by"]["/V"], "Phasor Office")
+
+    def test_pdf_export_rejects_changes_to_read_only_form_fields(self):
+        source = self.make_form_pdf()
+        output = self.root / "changed-read-only.pdf"
+
+        with self.assertRaisesRegex(ValueError, "issued_by is read-only"):
+            export_pdf(
+                str(source),
+                str(output),
+                {
+                    "markup": {
+                        "version": 1,
+                        "kind": "pdf",
+                        "pages": {},
+                        "form_values": {"issued_by": "Changed"},
+                    }
+                },
+            )
+
+        self.assertFalse(output.exists())
 
     def test_pdf_signature_markup_exports_as_vector_strokes(self):
         source = self.root / "signature.pdf"
@@ -633,7 +718,25 @@ class PreviewExportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "original PDFs are overwritten"):
             merge_pdfs([str(first), str(second)], str(second), {})
 
-    def test_print_submits_a_flattened_copy_with_printer_options(self):
+    def test_pdf_merge_rejects_signed_inputs_before_invalidating_them(self):
+        unsigned = self.make_form_pdf("unsigned.pdf")
+        signed = self.make_signature_fixture()
+        original_signed_pdf = signed.read_bytes()
+
+        for sources, output_name in (
+            ([signed, unsigned], "signed-first-merge.pdf"),
+            ([unsigned, signed], "signed-appended-merge.pdf"),
+        ):
+            output = self.root / output_name
+            with self.subTest(signed_position=sources.index(signed)):
+                with self.assertRaisesRegex(
+                    ValueError, "contains a digital signature.*merging would invalidate"
+                ):
+                    merge_pdfs([str(path) for path in sources], str(output), {})
+                self.assertFalse(output.exists())
+        self.assertEqual(signed.read_bytes(), original_signed_pdf)
+
+    def test_print_submits_a_prepared_copy_with_printer_options(self):
         source = self.root / "print-source.pdf"
         buffer = io.BytesIO()
         page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
@@ -692,6 +795,53 @@ class PreviewExportTests(unittest.TestCase):
                 )
         self.assertTrue(result["ok"])
 
+    def test_print_preserves_cropped_rotated_pdf_content_in_prepared_copy(self):
+        from pypdf import PdfWriter
+
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(300, 200))
+        page_canvas.drawString(40, 50, "CROPPED ROTATED PRINT PAGE")
+        page_canvas.showPage()
+        page_canvas.save()
+        buffer.seek(0)
+        page = PdfReader(buffer).pages[0]
+        page.cropbox.lower_left = (20, 15)
+        page.cropbox.upper_right = (280, 185)
+        page.rotate(90)
+        writer = PdfWriter()
+        writer.add_page(page)
+        source = self.root / "cropped-rotated.pdf"
+        with source.open("wb") as stream:
+            writer.write(stream)
+        original = source.read_bytes()
+
+        def submit(command, **kwargs):
+            printed = PdfReader(command[-1])
+            self.assertEqual(len(printed.pages), 1)
+            self.assertEqual(printed.pages[0].rotation, 180)
+            self.assertEqual(tuple(map(float, printed.pages[0].cropbox)), (15.0, 20.0, 185.0, 280.0))
+            self.assertIn("CROPPED ROTATED PRINT PAGE", printed.pages[0].extract_text())
+            return SimpleNamespace(returncode=0, stdout="job-2", stderr="")
+
+        with patch("apps.preview.document_ops.shutil.which", return_value="/usr/bin/lp"):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=submit):
+                result = print_document(
+                    str(source),
+                    {
+                        "markup": {
+                            "version": 1,
+                            "kind": "pdf",
+                            "pages": {},
+                            "page_order": [0],
+                            "page_rotations": {"0": 180},
+                        },
+                        "pages": "1",
+                    },
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(source.read_bytes(), original)
+
     def test_print_options_reject_command_injection_and_invalid_ranges(self):
         from apps.preview.document_ops import _validated_print_options
 
@@ -699,6 +849,20 @@ class PreviewExportTests(unittest.TestCase):
             _validated_print_options({"printer": "Office; touch /tmp/unsafe"})
         with self.assertRaisesRegex(ValueError, "ascending"):
             _validated_print_options({"pages": "5-2"})
+
+    def test_print_rejects_page_ranges_outside_the_prepared_document(self):
+        source = self.make_form_pdf()
+        submissions = []
+
+        with patch("apps.preview.document_ops.shutil.which", return_value="/usr/bin/lp"):
+            with patch(
+                "apps.preview.document_ops.subprocess.run",
+                side_effect=lambda *args, **kwargs: submissions.append(args),
+            ):
+                with self.assertRaisesRegex(ValueError, "exceeds the 1-page prepared document"):
+                    print_document(str(source), {"pages": "1-2"})
+
+        self.assertEqual(submissions, [])
 
 
 if __name__ == "__main__":
