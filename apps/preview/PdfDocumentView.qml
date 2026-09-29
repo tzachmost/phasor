@@ -14,8 +14,12 @@ Item {
     property real userZoom: 1
     property bool showThumbnails: true
     property var pageAnnotations: ({})
-    readonly property int pageCount: pdfDocument.pageCount
-    readonly property int currentPage: Math.max(0, pageView.currentPage)
+    property var pageOrder: []
+    property var savedPageOrder: null
+    property var pageRotations: ({})
+    readonly property int pageCount: pageOrder.length > 0 ? pageOrder.length : Math.max(0, pdfDocument.pageCount)
+    readonly property int currentPage: Math.max(0, pageOrder.indexOf(pageView.currentPage))
+    readonly property int sourcePage: pageView.currentPage
     readonly property int zoomPercent: Math.round(pageView.renderScale * 100)
     readonly property string documentStatus: pdfDocument.status === PdfDocument.Ready
         ? pageCount + (pageCount === 1 ? " page" : " pages")
@@ -27,24 +31,50 @@ Item {
 
     function loadMarkup(value) {
         pageAnnotations = value && value.pages ? value.pages : ({})
+        savedPageOrder = value && Array.isArray(value.page_order) ? value.page_order.slice() : null
+        pageRotations = value && value.page_rotations ? value.page_rotations : ({})
+        Qt.callLater(applySavedPageOperations)
         loadCurrentPageMarkup()
     }
 
+    function applySavedPageOperations() {
+        if (pdfDocument.status !== PdfDocument.Ready || pdfDocument.pageCount < 1) return
+        let order = []
+        if (savedPageOrder === null) {
+            for (let page = 0; page < pdfDocument.pageCount; page++) order.push(page)
+        } else {
+            for (const page of savedPageOrder) {
+                if (Number.isInteger(page) && page >= 0 && page < pdfDocument.pageCount && order.indexOf(page) < 0) order.push(page)
+            }
+            if (order.length === 0) order.push(0)
+        }
+        pageOrder = order
+        if (pageOrder.indexOf(pageView.currentPage) < 0) pageView.goToPage(pageOrder[0])
+        pageView.rotation = pageRotations[String(pageView.currentPage)] || 0
+        Qt.callLater(updateFit)
+    }
+
     function loadCurrentPageMarkup() {
-        markupLayer.annotations = pageAnnotations[String(currentPage)] || []
+        markupLayer.annotations = pageAnnotations[String(sourcePage)] || []
     }
 
     function storeCurrentPageMarkup() {
         const next = Object.assign({}, pageAnnotations)
-        next[String(currentPage)] = markupLayer.annotations
+        next[String(sourcePage)] = markupLayer.annotations
         pageAnnotations = next
         markupChanged()
     }
 
     function serializeMarkup() {
         const next = Object.assign({}, pageAnnotations)
-        next[String(currentPage)] = markupLayer.annotations
-        return { version: 1, kind: "pdf", pages: next }
+        next[String(sourcePage)] = markupLayer.annotations
+        return {
+            version: 1,
+            kind: "pdf",
+            pages: next,
+            page_order: pageOrder,
+            page_rotations: pageRotations
+        }
     }
 
     function addText(x, y, text) {
@@ -68,7 +98,9 @@ Item {
     }
 
     function goToPage(page) {
-        if (page >= 0 && page < pdfDocument.pageCount) pageView.goToPage(page)
+        if (page < 0 || page >= pageCount) return
+        const sourceIndex = pageOrder.length > page ? pageOrder[page] : page
+        if (sourceIndex >= 0 && sourceIndex < pdfDocument.pageCount) pageView.goToPage(sourceIndex)
     }
 
     function fit() {
@@ -79,7 +111,7 @@ Item {
 
     function updateFit() {
         if (pdfDocument.status !== PdfDocument.Ready || currentPage < 0) return
-        const size = pdfDocument.pagePointSize(currentPage)
+        const size = pdfDocument.pagePointSize(sourcePage)
         if (size.width <= 0 || size.height <= 0) return
         const sideways = Math.abs(pageView.rotation % 180) > 45 && Math.abs(pageView.rotation % 180) < 135
         const pageWidth = sideways ? size.height : size.width
@@ -95,8 +127,47 @@ Item {
     }
 
     function rotate(delta) {
-        pageView.rotation = (pageView.rotation + delta + 360) % 360
+        if (sourcePage < 0) return
+        const rotation = ((pageRotations[String(sourcePage)] || 0) + delta + 360) % 360
+        const next = Object.assign({}, pageRotations)
+        next[String(sourcePage)] = rotation
+        pageRotations = next
+        pageView.rotation = rotation
         updateFit()
+        markupChanged()
+    }
+
+    function moveCurrentPage(delta) {
+        const from = currentPage
+        const to = from + delta
+        if (from < 0 || to < 0 || from >= pageOrder.length || to >= pageOrder.length) return
+        const next = pageOrder.slice()
+        const value = next[from]
+        next[from] = next[to]
+        next[to] = value
+        pageOrder = next
+        markupChanged()
+    }
+
+    function excludeCurrentPage() {
+        if (pageOrder.length <= 1 || currentPage < 0) return
+        const next = pageOrder.slice()
+        next.splice(currentPage, 1)
+        const target = next[Math.min(currentPage, next.length - 1)]
+        pageOrder = next
+        if (target !== pageView.currentPage) pageView.goToPage(target)
+        markupChanged()
+    }
+
+    function resetPageOperations() {
+        const next = []
+        for (let page = 0; page < pdfDocument.pageCount; page++) next.push(page)
+        pageOrder = next
+        pageRotations = ({})
+        if (next.length > 0 && next.indexOf(pageView.currentPage) < 0) pageView.goToPage(next[0])
+        pageView.rotation = 0
+        updateFit()
+        markupChanged()
     }
 
     PdfDocument {
@@ -104,10 +175,13 @@ Item {
         source: root.source
         onSourceChanged: {
             root.pageAnnotations = ({})
+            root.pageOrder = []
+            root.savedPageOrder = null
+            root.pageRotations = ({})
             markupLayer.annotations = []
         }
         function onStatusChanged(status) {
-            if (status === PdfDocument.Ready) Qt.callLater(root.fit)
+            if (status === PdfDocument.Ready) Qt.callLater(root.applySavedPageOperations)
         }
     }
 
@@ -144,10 +218,11 @@ Item {
                     height: parent.height - 42
                     clip: true
                     spacing: Theme.Tokens.spacingM
-                    model: pdfDocument.status === PdfDocument.Ready ? pdfDocument.pageCount : 0
+                    model: pdfDocument.status === PdfDocument.Ready ? root.pageCount : 0
 
                     delegate: Rectangle {
                         required property int index
+                        readonly property int sourceIndex: root.pageOrder.length > index ? root.pageOrder[index] : index
                         width: thumbnails.width - 24
                         height: 148
                         anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
@@ -168,7 +243,7 @@ Item {
                                 clip: true
                                 PdfPageImage {
                                     document: pdfDocument
-                                    currentFrame: index
+                                    currentFrame: sourceIndex
                                     anchors.fill: parent
                                     anchors.margins: 4
                                     fillMode: Image.PreserveAspectFit
@@ -239,6 +314,8 @@ Item {
     Connections {
         target: pageView
         function onCurrentPageChanged() {
+            const rotation = root.pageRotations[String(root.sourcePage)] || 0
+            if (pageView.rotation !== rotation) pageView.rotation = rotation
             root.loadCurrentPageMarkup()
             Qt.callLater(root.updateFit)
         }

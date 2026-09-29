@@ -49,6 +49,35 @@ class PreviewMarkupTests(unittest.TestCase):
 
         self.assertEqual(load_markup(str(self.document)), payload)
 
+    def test_pdf_page_operations_round_trip_through_sidecar(self) -> None:
+        payload = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {},
+            "page_order": [2, 0],
+            "page_rotations": {"2": 90, "0": 270},
+        }
+
+        save_markup(str(self.document), json.dumps(payload))
+
+        self.assertEqual(load_markup(str(self.document)), payload)
+
+    def test_pdf_page_operations_reject_duplicates_and_invalid_rotations(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unique"):
+            validate_payload({
+                "version": 1,
+                "kind": "pdf",
+                "pages": {},
+                "page_order": [1, 1],
+            })
+        with self.assertRaisesRegex(ValueError, "0, 90, 180, or 270"):
+            validate_payload({
+                "version": 1,
+                "kind": "pdf",
+                "pages": {},
+                "page_rotations": {"0": 45},
+            })
+
     def test_markup_rejects_out_of_range_coordinates_and_invalid_colors(self) -> None:
         base = {"version": 1, "kind": "image", "annotations": []}
         with self.assertRaisesRegex(ValueError, "between zero and one"):

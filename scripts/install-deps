@@ -22,7 +22,7 @@ if (( EUID == 0 )); then
     exit 1
 fi
 
-official=(quickshell python xdg-utils wl-clipboard glib2 playerctl cliphist swaync flameshot swaybg brightnessctl pipewire wireplumber networkmanager bluez polkit polkit-gnome base-devel git)
+official=(quickshell python python-pillow python-pypdf python-reportlab libwebp ttf-dejavu xdg-utils wl-clipboard glib2 playerctl cliphist swaync flameshot swaybg brightnessctl pipewire wireplumber networkmanager bluez polkit polkit-gnome base-devel git)
 if ! command -v pacman >/dev/null 2>&1; then
     printf 'pacman was not found. Install Arch package equivalents manually.\n' >&2
     exit 1

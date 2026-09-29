@@ -10,6 +10,11 @@ BuildArch:      noarch
 Requires:       mangowm
 Requires:       quickshell
 Requires:       python3
+Requires:       python3-pillow
+Requires:       python3-pypdf
+Requires:       python3-reportlab
+Requires:       dejavu-sans-fonts
+Requires:       libwebp
 Requires:       xdg-utils
 Requires:       wl-clipboard
 Requires:       glib2

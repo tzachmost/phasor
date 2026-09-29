@@ -38,6 +38,10 @@ See [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/road
 
 For other installation paths and update/removal instructions, see [docs/install.md](docs/install.md). For a new work session, start with [docs/handoff.md](docs/handoff.md) for the current state, completed work, validation limits, and suggested next steps.
 
+## Preview
+
+Preview opens images and PDFs, supports multi-tool markup, crops and converts images, and exports marked-up PDFs with page reorder, exclusion, and rotation. Exported files are new copies; editable annotations remain in a sidecar beside the original. See [docs/preview.md](docs/preview.md) for formats and optional PDF viewing dependencies.
+
 ## Release status
 
 Phasor 1.0.0 delivers the Phasor session, validated settings, Mango Space and window controls, a top Bar with clock and tray support, an optional bottom Dock, notification and Do Not Disturb controls, clipboard history, screenshot capture, the Desktop shortcuts, the app and file Launcher, and diagnostics. Arch/CachyOS, Fedora/Universal Blue, and NixOS install adapters are included. See the [1.0 checklist](docs/roadmap.md), [1.0.0 release notes](docs/releases/1.0.0.md), and [GitHub release](https://github.com/tzachmost/phasor/releases/tag/v1.0.0). Preview is the first post-1.0 application and is now in development.

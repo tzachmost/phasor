@@ -43,6 +43,6 @@ The 1.0 checklist is complete. Submitting the stable Arch recipe to the AUR is a
 - [x] View common Qt-supported image formats and PDFs, with fit/zoom/rotation controls.
 - [x] Browse PDF thumbnails and pages, search text, select text, and copy it.
 - [x] Add pen, highlight, rectangle, and text markup with autosaved editable sidecars.
-- [ ] Crop and resize images, convert formats, and export a flattened result.
-- [ ] Export PDF markup into an editable or flattened PDF and add page operations.
+- [x] Crop and resize images, convert formats, and export a flattened result.
+- [x] Export PDF markup into a flattened PDF, with page reorder, exclusion, and rotation operations.
 - [ ] Add forms, signatures, and print support.

@@ -115,7 +115,33 @@ def validate_payload(value: Any) -> dict[str, Any]:
             if total > MAX_ANNOTATIONS:
                 raise ValueError("PDF markup has too many annotations")
             normalized[str(int(page))] = [_validate_annotation(item) for item in annotations]
-        return {"version": 1, "kind": "pdf", "pages": normalized}
+        result: dict[str, Any] = {"version": 1, "kind": "pdf", "pages": normalized}
+        page_order = value.get("page_order")
+        if page_order is not None:
+            if (
+                not isinstance(page_order, list)
+                or not page_order
+                or len(page_order) > 20000
+                or any(isinstance(page, bool) or not isinstance(page, int) for page in page_order)
+                or any(page < 0 or page >= 20000 for page in page_order)
+                or len(set(page_order)) != len(page_order)
+            ):
+                raise ValueError("PDF page order must contain unique non-negative page ids")
+            result["page_order"] = page_order
+
+        page_rotations = value.get("page_rotations")
+        if page_rotations is not None:
+            if not isinstance(page_rotations, dict) or len(page_rotations) > 20000:
+                raise ValueError("PDF page rotations must be a page map")
+            rotations: dict[str, int] = {}
+            for page, rotation in page_rotations.items():
+                if not isinstance(page, str) or not page.isdigit():
+                    raise ValueError("PDF rotation page ids must be non-negative integers")
+                if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation not in {0, 90, 180, 270}:
+                    raise ValueError("PDF page rotations must be 0, 90, 180, or 270 degrees")
+                rotations[str(int(page))] = rotation
+            result["page_rotations"] = rotations
+        return result
     raise ValueError("Markup kind must be image or pdf")
 
 

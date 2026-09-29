@@ -37,7 +37,7 @@ phasor-doctor
 
 Once the stable recipe is available from the AUR, packages installed from there can be updated with an AUR helper such as `paru -Syu phasor-shell`. Remove it with `sudo pacman -R phasor-shell`.
 
-Preview is installed as a separate app. Open it from the application launcher or run `phasor-preview path/to/file`. PDF viewing needs the optional `qt6-webengine` package; image viewing works without it. Editable markup is stored beside the original as a `*.phasor-markup.json` file.
+Preview is installed as a separate app. Open it from the application launcher or run `phasor-preview path/to/file`. PDF viewing needs the optional `qt6-webengine` package; image viewing and export work without it. The package includes image/PDF export support. Editable image and PDF markup, plus PDF page operations, are stored beside the original as a `*.phasor-markup.json` file.
 
 The main-branch development recipe is kept in `package/arch/PKGBUILD.git`. Build it with `makepkg -si -p PKGBUILD.git`, update it from a newer commit, and remove it with `sudo pacman -R phasor-shell-git`. The stable and development packages replace each other.
 
@@ -53,7 +53,7 @@ cd ~/Work/phasor
 
 For source updates, use the Arch/CachyOS update steps above. To build an RPM, install `rpm-build` and run `./scripts/build-rpm`. The RPM and SRPM are written under `package/fedora/RPMS/`. Install or update the exact noarch RPM from that directory with `sudo dnf install /path/to/phasor-shell.rpm`; run `phasor-doctor` after installing. Remove an RPM install with `sudo dnf remove phasor-shell`.
 
-Preview is installed as a separate app. Install `qt6-qtpdf` to enable PDF viewing; image viewing works without that optional package.
+Preview is installed as a separate app. Install `qt6-qtpdf` to enable PDF viewing; image viewing and image export work without that optional package. The RPM includes Pillow, pypdf, ReportLab, and DejaVu Sans for export.
 
 ## Universal Blue and other OSTree Fedora systems
 
@@ -75,7 +75,7 @@ Reboot to apply the staged deployment. To uninstall, run `sudo rpm-ostree uninst
 
 Add the Mango and Phasor inputs and import `inputs.phasor.nixosModules.default` in the host configuration. The module imports the [Mango NixOS module](https://github.com/mangowm/mango/wiki/installation) and registers Phasor as a separate session. The complete flake example is in [package/nix/README.md](../package/nix/README.md). Apply it with `sudo nixos-rebuild switch --flake .#myHost`, then choose **Phasor** in the login manager. Run `phasor-doctor` from a terminal to inspect the session dependencies.
 
-Preview is installed as a separate app. Add `pkgs.qt6.qtwebengine` to the host's packages to enable PDF viewing; image viewing works without it.
+Preview is installed as a separate app. Add `pkgs.qt6.qtwebengine` to the host's packages to enable PDF viewing; image viewing and export support are included in the Phasor package.
 
 Update the Phasor input and switch to the new system generation:
 

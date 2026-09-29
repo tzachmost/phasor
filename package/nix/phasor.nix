@@ -8,6 +8,7 @@
   gnugrep,
   quickshell,
   python3,
+  dejavu_fonts,
   xdg-utils,
   wl-clipboard,
   glib,
@@ -22,6 +23,9 @@
   bluez,
   polkit_gnome,
 }:
+let
+  previewPython = python3.withPackages (ps: [ ps.pillow ps.pypdf ps.reportlab ]);
+in
 stdenvNoCC.mkDerivation {
   pname = "phasor-shell";
   version = (builtins.fromTOML (builtins.readFile ../../pyproject.toml)).project.version;
@@ -40,7 +44,7 @@ stdenvNoCC.mkDerivation {
     cp -R "$src/apps" "$out/share/phasor/"
 
     runtimePath="${lib.makeBinPath [
-      bash coreutils findutils gnugrep quickshell python3 xdg-utils wl-clipboard
+      bash coreutils findutils gnugrep quickshell previewPython xdg-utils wl-clipboard
       glib swaybg cliphist swaynotificationcenter flameshot playerctl brightnessctl
       wireplumber networkmanager bluez polkit_gnome
     ]}"
@@ -54,6 +58,7 @@ stdenvNoCC.mkDerivation {
       --prefix PATH : "$runtimePath"
     makeWrapper "$out/share/phasor/scripts/phasor-preview" "$out/bin/phasor-preview" \
       --set PHASOR_PREVIEW_ROOT "$out/share/phasor" \
+      --set PHASOR_PREVIEW_FONT "${dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf" \
       --prefix PATH : "$runtimePath"
 
     mkdir -p "$out/share/applications"

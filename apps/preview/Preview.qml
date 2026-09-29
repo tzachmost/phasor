@@ -25,11 +25,15 @@ ApplicationWindow {
     property color markColor: "#8bd5ca"
     property int markColorIndex: 0
     property real strokeScale: 0.006
+    property string exportFormat: "PNG"
+    property bool preserveAspect: true
     property string searchText: ""
     property string saveStatus: ""
+    property string markupLoadPath: ""
     property var loadedMarkup: ({})
     property var pendingTextPosition: ({ x: 0, y: 0 })
     property string helperPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/markup_store.py"
+    property string documentOpsPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/document_ops.py"
 
     function pathFromUrl(value) {
         let path = String(value)
@@ -58,7 +62,10 @@ ApplicationWindow {
         saveStatus = ""
         loadedMarkup = ({})
         activeTool = "select"
+        autosaveTimer.stop()
+        if (viewerLoader.item && viewerLoader.item.resetDocument) viewerLoader.item.resetDocument()
         if (viewerLoader.item && viewerLoader.item.loadMarkup) viewerLoader.item.loadMarkup(loadedMarkup)
+        markupLoadPath = sourcePath
         loadProcess.exec(["python3", helperPath, "load", sourcePath])
     }
 
@@ -76,6 +83,7 @@ ApplicationWindow {
 
     function saveMarkup() {
         if (!sourcePath || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
+        if (root.isPdf && viewerLoader.item.sourcePage < 0) return
         saveProcess.exec([
             "python3",
             helperPath,
@@ -84,6 +92,41 @@ ApplicationWindow {
             JSON.stringify(viewerLoader.item.serializeMarkup())
         ])
         saveStatus = "Saving markup…"
+    }
+
+    function openExportDialog() {
+        if (!sourcePath || !viewerLoader.item) return
+        exportOptionsDialog.open()
+    }
+
+    function chooseExportDestination() {
+        exportOptionsDialog.close()
+        exportFileDialog.open()
+    }
+
+    function exportTo(value) {
+        if (!sourcePath || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
+        let output = pathFromUrl(value)
+        const suffix = root.isPdf ? "pdf" : root.exportFormat.toLowerCase() === "jpeg" ? "jpg" : root.exportFormat.toLowerCase()
+        if (!/\.[^/]+$/.test(output)) output += "." + suffix
+        const options = { markup: viewerLoader.item.serializeMarkup() }
+        if (!root.isPdf) {
+            options.crop = viewerLoader.item.cropRect || null
+            options.rotation = viewerLoader.item.rotation || 0
+            options.width = imageWidthInput.text
+            options.height = imageHeightInput.text
+            options.preserve_aspect = root.preserveAspect
+            options.quality = imageQualityInput.value
+        }
+        exportProcess.exec([
+            "python3",
+            root.documentOpsPath,
+            root.isPdf ? "pdf" : "image",
+            root.sourcePath,
+            output,
+            JSON.stringify(options)
+        ])
+        saveStatus = "Exporting a copy…"
     }
 
     function setMarkColor(color) {
@@ -128,6 +171,18 @@ ApplicationWindow {
         onAccepted: root.openFile(selectedFile)
     }
 
+    FileDialog {
+        id: exportFileDialog
+        title: root.isPdf ? "Export PDF copy" : "Export image copy"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: root.isPdf ? "pdf" : root.exportFormat.toLowerCase() === "jpeg" ? "jpg" : root.exportFormat.toLowerCase()
+        nameFilters: root.isPdf
+            ? ["PDF document (*.pdf)"]
+            : root.exportFormat === "JPEG" ? ["JPEG image (*.jpg *.jpeg)"]
+            : [root.exportFormat + " image (*." + (root.exportFormat === "TIFF" ? "tif *.tiff" : root.exportFormat.toLowerCase()) + ")"]
+        onAccepted: root.exportTo(selectedFile)
+    }
+
     onSourceUrlChanged: {
         if (viewerLoader.item) viewerLoader.item.source = sourceUrl
     }
@@ -149,6 +204,7 @@ ApplicationWindow {
         command: ["python3"]
         stdout: StdioCollector {
             onStreamFinished: {
+                if (root.markupLoadPath !== root.sourcePath) return
                 try {
                     root.loadedMarkup = JSON.parse(text)
                     if (root.loadedMarkup.error) root.saveStatus = root.loadedMarkup.error
@@ -177,6 +233,24 @@ ApplicationWindow {
             }
         }
         stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview markup save:", text) }
+    }
+
+    Process {
+        id: exportProcess
+        command: ["python3"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.saveStatus = result.ok
+                        ? "Exported " + root.nameFromPath(result.path) + (result.pages ? " · " + result.pages + " pages" : "")
+                        : (result.error || "Could not export this file")
+                } catch (error) {
+                    root.saveStatus = "Could not export this file"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview export:", text) }
     }
 
     Timer {
@@ -231,6 +305,7 @@ ApplicationWindow {
                 ToolAction { text: "Highlight"; active: root.activeTool === "highlight"; onClicked: root.activeTool = "highlight" }
                 ToolAction { text: "Shape"; active: root.activeTool === "rectangle"; onClicked: root.activeTool = "rectangle" }
                 ToolAction { text: "Text"; active: root.activeTool === "text"; onClicked: root.activeTool = "text" }
+                ToolAction { text: "Crop"; visible: !root.isPdf; active: root.activeTool === "crop"; onClicked: root.activeTool = root.activeTool === "crop" ? "select" : "crop" }
 
                 ToolAction { text: "Color"; onClicked: {
                     const colors = ["#8bd5ca", "#f3c969", "#ed8796", "#a8c7fa", "#f0f1f4"]
@@ -238,7 +313,9 @@ ApplicationWindow {
                     root.setMarkColor(colors[root.markColorIndex])
                 } }
                 ToolAction { text: "Undo"; enabled: Boolean(viewerLoader.item); onClicked: if (viewerLoader.item && viewerLoader.item.undo) viewerLoader.item.undo() }
-                ToolAction { text: "Save marks"; enabled: Boolean(root.sourcePath); onClicked: root.saveMarkup() }
+                ToolAction { text: "Save marks"; enabled: Boolean(root.sourcePath && viewerLoader.item && (!root.isPdf || viewerLoader.item.sourcePage >= 0)); onClicked: root.saveMarkup() }
+                ToolAction { id: pageActionsButton; text: "Page ▾"; visible: root.isPdf; onClicked: pageMenu.popup(pageActionsButton, Qt.point(0, pageActionsButton.height)) }
+                ToolAction { text: "Export"; enabled: Boolean(root.sourcePath && viewerLoader.item && (!root.isPdf || viewerLoader.item.pageCount > 0)); onClicked: root.openExportDialog() }
 
                 Item { Layout.fillWidth: true }
 
@@ -297,6 +374,9 @@ ApplicationWindow {
                         function onCurrentPageChanged() {
                             if (!pageInput.activeFocus && viewerLoader.item) pageInput.text = String(viewerLoader.item.currentPage + 1)
                         }
+                        function onPageOrderChanged() {
+                            if (!pageInput.activeFocus && viewerLoader.item) pageInput.text = String(viewerLoader.item.currentPage + 1)
+                        }
                     }
                 }
                 Text { text: "/ " + (viewerLoader.item ? viewerLoader.item.pageCount : 0); color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
@@ -317,6 +397,14 @@ ApplicationWindow {
             ToolAction { text: "Find ‹"; visible: root.isPdf; enabled: Boolean(viewerLoader.item && root.searchText.length > 0); onClicked: viewerLoader.item.searchBack() }
             ToolAction { text: "Find ›"; visible: root.isPdf; enabled: Boolean(viewerLoader.item && root.searchText.length > 0); onClicked: viewerLoader.item.searchForward() }
             ToolAction { text: "Copy text"; visible: root.isPdf; enabled: Boolean(viewerLoader.item); onClicked: if (viewerLoader.item && viewerLoader.item.copySelection) viewerLoader.item.copySelection() }
+            Menu {
+                id: pageMenu
+                MenuItem { text: "Move page earlier"; enabled: Boolean(viewerLoader.item && viewerLoader.item.currentPage > 0); onTriggered: viewerLoader.item.moveCurrentPage(-1) }
+                MenuItem { text: "Move page later"; enabled: Boolean(viewerLoader.item && viewerLoader.item.currentPage + 1 < viewerLoader.item.pageCount); onTriggered: viewerLoader.item.moveCurrentPage(1) }
+                MenuSeparator { }
+                MenuItem { text: "Exclude page from export"; enabled: Boolean(viewerLoader.item && viewerLoader.item.pageCount > 1); onTriggered: viewerLoader.item.excludeCurrentPage() }
+                MenuItem { text: "Reset page operations"; enabled: Boolean(viewerLoader.item); onTriggered: viewerLoader.item.resetPageOperations() }
+            }
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.Tokens.separator }
@@ -408,7 +496,7 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     text: root.sourcePath && viewerLoader.item
-                        ? viewerLoader.item.documentStatus + (root.isPdf ? " · PDF" : " · Image")
+                        ? viewerLoader.item.documentStatus + (root.isPdf ? " · PDF" : root.activeTool === "crop" ? " · Drag to select crop" : " · Image")
                         : "PDF · PNG · JPEG · SVG · WebP"
                     color: Theme.Tokens.textSecondary
                     font.pixelSize: 10
@@ -440,6 +528,63 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: exportOptionsDialog
+        title: root.isPdf ? "Export PDF" : "Export image"
+        modal: true
+        standardButtons: Dialog.Cancel
+
+        contentItem: ColumnLayout {
+            implicitWidth: 420
+            spacing: 12
+
+            Text {
+                Layout.fillWidth: true
+                text: root.isPdf
+                    ? "Save a new PDF with your markup drawn onto each page. Page order, excluded pages, and rotations are applied to the exported copy. Text and original page content stay searchable."
+                    : "Save a new image with markup applied. The original stays untouched. A crop selection is applied before rotation and resizing."
+                color: Theme.Tokens.textSecondary
+                wrapMode: Text.WordWrap
+            }
+
+            GridLayout {
+                visible: !root.isPdf
+                Layout.fillWidth: true
+                columns: 2
+                columnSpacing: 12
+                rowSpacing: 9
+
+                Text { text: "Maximum width"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+                TextField { id: imageWidthInput; Layout.fillWidth: true; placeholderText: "Keep original"; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 0; top: 32768 } }
+                Text { text: "Maximum height"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+                TextField { id: imageHeightInput; Layout.fillWidth: true; placeholderText: "Keep original"; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 0; top: 32768 } }
+                Text { text: "Format"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+                ComboBox {
+                    id: formatInput
+                    Layout.fillWidth: true
+                    model: ["PNG", "JPEG", "WebP", "TIFF", "BMP"]
+                    currentIndex: Math.max(0, ["PNG", "JPEG", "WebP", "TIFF", "BMP"].indexOf(root.exportFormat))
+                    onActivated: root.exportFormat = currentText
+                }
+                Text { text: "Quality"; visible: root.exportFormat === "JPEG" || root.exportFormat === "WebP"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+                SpinBox { id: imageQualityInput; visible: root.exportFormat === "JPEG" || root.exportFormat === "WebP"; from: 1; to: 100; value: 92; editable: true; Layout.fillWidth: true }
+                CheckBox { text: "Preserve aspect ratio"; checked: root.preserveAspect; visible: !root.isPdf; Layout.columnSpan: 2; onToggled: root.preserveAspect = checked }
+                RowLayout {
+                    visible: Boolean(viewerLoader.item && viewerLoader.item.cropRect)
+                    Layout.columnSpan: 2
+                    Text { text: "A crop selection will be applied."; color: Theme.Tokens.accent; font.pixelSize: 12; Layout.fillWidth: true }
+                    Button { text: "Clear"; onClicked: viewerLoader.item.clearCrop() }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { text: "Choose destination…"; highlighted: true; onClicked: root.chooseExportDestination() }
+            }
+        }
+    }
+
     Shortcut { sequence: "Ctrl+O"; onActivated: fileDialog.open() }
     Shortcut { sequence: "Ctrl+S"; onActivated: root.saveMarkup() }
     Shortcut { sequence: "Ctrl++"; onActivated: root.zoomBy(1.25) }
@@ -467,6 +612,10 @@ ApplicationWindow {
         if (value.kind === "pdf") {
             for (const page of Object.keys(value.pages || {})) {
                 if (value.pages[page] && value.pages[page].length) return true
+            }
+            if (value.page_order && value.page_order.some(function(page, index) { return page !== index })) return true
+            for (const page of Object.keys(value.page_rotations || {})) {
+                if (value.page_rotations[page] !== 0) return true
             }
         }
         return false
