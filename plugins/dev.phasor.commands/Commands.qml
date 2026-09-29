@@ -13,9 +13,11 @@ Item {
     property string query: ""
     property string errorText: ""
     property var settingsData: ({})
+    property var shortcuts: []
     property var commands: [
         { id: "launcher", title: "Open applications and files", detail: "Search apps, documents, and Spaces", section: "Applications" },
         { id: "settings", title: "Open Settings", detail: "Change the Phasor desktop setup", section: "Settings" },
+        { id: "mango", title: "Configure tiling", detail: "Arrange windows and fine-tune layouts", section: "Settings" },
         { id: "shortcuts", title: "Change keyboard shortcuts", detail: "Open Settings on the shortcuts page", section: "Settings" },
         { id: "system", title: "Open system controls", detail: "Wi-Fi, Bluetooth, sound, and brightness", section: "Settings" },
         { id: "dock", title: "Toggle Dock", detail: "Show or hide the running windows Dock", section: "Shell" },
@@ -27,10 +29,35 @@ Item {
 
     function filterCommands() {
         const needle = query.trim().toLowerCase()
-        filteredCommands = commands.filter(function(command) {
+        const combined = commands.concat(shortcuts)
+        filteredCommands = combined.filter(function(command) {
             return needle.length === 0 || (command.title + " " + command.detail + " " + command.section).toLowerCase().indexOf(needle) >= 0
         })
         selectedIndex = Math.min(selectedIndex, Math.max(filteredCommands.length - 1, 0))
+    }
+
+    function formatKey(value) {
+        const names = { "SUPER": "Super", "CTRL": "Ctrl", "CONTROL": "Ctrl", "ALT": "Alt", "SHIFT": "Shift", "SPACE": "Space", "LEFT": "←", "RIGHT": "→", "UP": "↑", "DOWN": "↓", "comma": ",", "slash": "/", "TAB": "Tab", "RETURN": "Enter", "ESC": "Esc" }
+        const key = String(value || "").trim()
+        return names[key] || names[key.toUpperCase()] || (key.length === 1 ? key.toUpperCase() : key)
+    }
+
+    function loadShortcuts() {
+        if (!phasor) return
+        phasor.request("mango.config.get", {}, function(result) {
+            if (result.error) { errorText = result.error; return }
+            const rows = []
+            const lines = String(result.config || "").split(/\r?\n/)
+            for (let i = 0; i < lines.length; i++) {
+                const match = lines[i].trim().match(/^(bind[a-z]*)\s*=\s*([^,]+),([^,]+),(.+)$/i)
+                if (!match) continue
+                const modifiers = match[2].split("+").map(formatKey).filter(function(part) { return part.length > 0 })
+                const key = formatKey(match[3])
+                rows.push({ id: "shortcut-" + i, kind: "shortcut", title: modifiers.concat([key]).join(" + "), detail: "Window manager · " + match[1] + " → " + match[4].trim(), section: "Keyboard shortcuts" })
+            }
+            shortcuts = rows
+            filterCommands()
+        })
     }
 
     function refreshSettings() {
@@ -48,12 +75,15 @@ Item {
     function run(command) {
         if (!phasor || !command) return
         errorText = ""
+        if (command.kind === "shortcut") return
         if (command.id === "launcher") {
             phasor.request("launcher.toggle", {}, finishRequest)
         } else if (command.id === "settings") {
             phasor.request("settings.toggle", { section: "appearance" }, finishRequest)
         } else if (command.id === "shortcuts") {
             phasor.request("settings.toggle", { section: "shortcuts" }, finishRequest)
+        } else if (command.id === "mango") {
+            phasor.request("settings.toggle", { section: "mango" }, finishRequest)
         } else if (command.id === "system") {
             phasor.request("settings.toggle", { section: "system" }, finishRequest)
         } else if (command.id === "previousSpace") {
@@ -89,6 +119,7 @@ Item {
             errorText = ""
             filterCommands()
             refreshSettings()
+            loadShortcuts()
             Qt.callLater(function() { commandSearch.forceActiveFocus() })
         }
     }
@@ -97,7 +128,7 @@ Item {
         target: commandPalette.phasor
         function onEventReceived(event) {
             if (event.type === "action" && event.name === "commands.toggle") commandPalette.open = !commandPalette.open
-            if (event.type === "event" && event.name === "settings.changed" && commandPalette.open) commandPalette.refreshSettings()
+            if (event.type === "event" && event.name === "settings.changed" && commandPalette.open) { commandPalette.refreshSettings(); commandPalette.loadShortcuts() }
         }
     }
 
@@ -140,7 +171,7 @@ Item {
                     TextField {
                         id: commandSearch
                         Layout.fillWidth: true
-                        placeholderText: "Search Phasor commands"
+                        placeholderText: "Search commands and shortcuts"
                         color: Theme.Tokens.textPrimary
                         placeholderTextColor: Theme.Tokens.textSecondary
                         font.pixelSize: 17
@@ -224,7 +255,7 @@ Item {
                         color: Theme.Tokens.textSecondary
                         font.pixelSize: 10
                     }
-                    Text { text: "↑ ↓ Navigate  ·  Enter Run  ·  Esc Close"; color: Theme.Tokens.textSecondary; font.pixelSize: 10 }
+                    Text { text: "↑ ↓ Navigate  ·  Enter Run action  ·  Esc Close"; color: Theme.Tokens.textSecondary; font.pixelSize: 10 }
                 }
             }
         }

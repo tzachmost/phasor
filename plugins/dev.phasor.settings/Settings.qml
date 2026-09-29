@@ -20,6 +20,11 @@ Item {
     property bool savingPlugin: false
     property string savingPluginId: ""
     property bool systemBusy: false
+    property bool mangoBusy: false
+    property bool mangoEditable: true
+    property string mangoConfigSource: "installed defaults"
+    property string mangoConfigText: ""
+    property bool advancedMangoOpen: false
     property var settingsData: ({})
     property string section: "appearance"
     property string errorText: ""
@@ -30,6 +35,46 @@ Item {
     property var audioStatus: ({ available: false, error: "Open Settings to check audio." })
     property var brightnessStatus: ({ available: false, error: "Open Settings to check brightness." })
     property var notificationsStatus: ({ available: false, error: "Open Settings to check notifications." })
+
+    function loadMangoConfig() {
+        if (!phasor || mangoBusy) return
+        mangoBusy = true
+        errorText = ""
+        phasor.request("mango.config.get", {}, function(result) {
+            mangoBusy = false
+            if (result.error) { errorText = result.error; return }
+            mangoConfigText = result.config || ""
+            mangoConfigSource = result.source || "installed defaults"
+            mangoEditable = result.editable !== false
+            if (preferences.open && preferences.section === "mango" && preferences.advancedMangoOpen) Qt.callLater(function() { mangoConfigEditor.forceActiveFocus() })
+        })
+    }
+
+    function saveMangoConfig() {
+        if (!phasor || mangoBusy || !mangoEditable) return
+        mangoBusy = true
+        errorText = ""
+        statusText = ""
+        phasor.request("mango.config.update", { config: mangoConfigText }, function(result) {
+            mangoBusy = false
+            if (result.error) { errorText = result.error; return }
+            mangoConfigSource = "user"
+            statusText = "Tiling settings saved and reloaded"
+        })
+    }
+
+    function resetMangoConfig() {
+        if (!phasor || mangoBusy || !mangoEditable) return
+        mangoBusy = true
+        errorText = ""
+        statusText = ""
+        phasor.request("mango.config.reset", {}, function(result) {
+            mangoBusy = false
+            if (result.error) { errorText = result.error; return }
+            statusText = "Restored recommended defaults"
+            loadMangoConfig()
+        })
+    }
 
     function load(preserveAppearance) {
         if (!phasor) return
@@ -255,7 +300,10 @@ Item {
         if (open) {
             load(false)
             refreshSystem()
-            Qt.callLater(function() { schemeBox.forceActiveFocus() })
+            Qt.callLater(function() {
+                if (preferences.section === "mango" && preferences.advancedMangoOpen) mangoConfigEditor.forceActiveFocus()
+                else schemeBox.forceActiveFocus()
+            })
         }
     }
 
@@ -265,6 +313,7 @@ Item {
             if (event.type === "action" && event.name === "settings.toggle") {
                 if (event.data && event.data.section) preferences.section = event.data.section
                 preferences.open = !preferences.open
+                if (event.data && event.data.section === "mango") preferences.loadMangoConfig()
             }
             if (event.type === "event" && event.name === "settings.changed" && preferences.open) preferences.load(preferences.appearanceDirty)
         }
@@ -324,7 +373,7 @@ Item {
                             Rectangle {
                                 Layout.preferredWidth: 30
                                 Layout.preferredHeight: 30
-                                radius: 10
+                                radius: 4
                                 color: Theme.Tokens.accent
                                 Text { anchors.centerIn: parent; text: "P"; color: Theme.Tokens.background; font.pixelSize: 16; font.bold: true }
                             }
@@ -344,6 +393,7 @@ Item {
                                 { id: "shell", title: "Shell", glyph: "▦" },
                                 { id: "system", title: "System", glyph: "⌘" },
                                 { id: "shortcuts", title: "Shortcuts", glyph: "⌨" },
+                                { id: "mango", title: "Tiling", glyph: "▤" },
                                 { id: "about", title: "About", glyph: "ⓘ" }
                             ]
                             delegate: Button {
@@ -356,6 +406,7 @@ Item {
                                 onClicked: {
                                     preferences.section = modelData.id
                                     if (modelData.id === "system") preferences.refreshSystem()
+                                    if (modelData.id === "mango") preferences.loadMangoConfig()
                                 }
                                 background: Rectangle {
                                     radius: Theme.Tokens.radiusSmall
@@ -397,13 +448,13 @@ Item {
                             Layout.fillWidth: true
                             spacing: 2
                             Text {
-                                text: preferences.section === "appearance" ? "Appearance" : preferences.section === "shell" ? "Shell" : preferences.section === "system" ? "System" : preferences.section === "shortcuts" ? "Keyboard shortcuts" : "About Phasor"
+                                text: preferences.section === "appearance" ? "Appearance" : preferences.section === "shell" ? "Shell" : preferences.section === "system" ? "System" : preferences.section === "shortcuts" ? "Keyboard shortcuts" : preferences.section === "mango" ? "Tiling" : "About Phasor"
                                 color: Theme.Tokens.textPrimary
                                 font.pixelSize: 23
                                 font.bold: true
                             }
                             Text {
-                                text: preferences.section === "appearance" ? "Make the desktop feel like yours." : preferences.section === "shell" ? "Choose which Phasor surfaces are active." : preferences.section === "system" ? "Control the devices and services available on this system." : preferences.section === "shortcuts" ? "The default keys for common Phasor actions." : "A portable desktop shell built around your workflow."
+                                text: preferences.section === "appearance" ? "Make the desktop feel like yours." : preferences.section === "shell" ? "Choose which Phasor surfaces are active." : preferences.section === "system" ? "Control the devices and services available on this system." : preferences.section === "shortcuts" ? "The default keys for common Phasor actions." : preferences.section === "mango" ? "Arrange windows and choose how your layouts behave." : "A portable desktop shell built around your workflow."
                                 color: Theme.Tokens.textSecondary
                                 font.pixelSize: 12
                             }
@@ -621,7 +672,7 @@ Item {
                                         { id: "dev.phasor.bar", title: "Top Bar", detail: "Spaces, clock, tray, notifications, clipboard, and quick actions." },
                                         { id: "dev.phasor.launcher", title: "Launcher", detail: "Search applications, files, and Spaces." },
                                         { id: "dev.phasor.desktop", title: "Desktop shortcuts", detail: "Home, Applications, and Settings shortcuts over the wallpaper." },
-                                        { id: "dev.phasor.dock", title: "Dock", detail: "Focus and close running windows from the bottom edge." },
+                                        { id: "dev.phasor.dock", title: "Dock", detail: "Open app icons, minimize or restore windows, and close them from the bottom edge." },
                                         { id: "dev.phasor.commands", title: "Command palette", detail: "Search for Phasor actions and open Settings pages." },
                                         { id: "dev.phasor.clipboard", title: "Clipboard history", detail: "Keep recent clipboard items available from the Bar." },
                                         { id: "dev.phasor.notifications", title: "Notification controls", detail: "Show notification count and Do Not Disturb controls." },
@@ -786,7 +837,7 @@ Item {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text { Layout.fillWidth: true; text: "Workspace changes update the active Phasor Mango session."; color: Theme.Tokens.textSecondary; font.pixelSize: 11; wrapMode: Text.Wrap }
+                                Text { Layout.fillWidth: true; text: "Workspace changes apply to the active window layout."; color: Theme.Tokens.textSecondary; font.pixelSize: 11; wrapMode: Text.Wrap }
                                     Components.PhasorButton { text: preferences.savingPreferences ? "Saving…" : "Save shell settings"; enabled: !preferences.loading && !preferences.savingPreferences; onClicked: preferences.saveShellPreferences() }
                                 }
                             }
@@ -955,7 +1006,7 @@ Item {
                                 visible: preferences.section === "shortcuts"
                                 Layout.fillWidth: true
                                 spacing: Theme.Tokens.spacingM
-                                Text { Layout.fillWidth: true; text: "Choose the main shortcuts for Launcher, Commands, and Settings. Changes are applied by the active Phasor Mango session."; color: Theme.Tokens.textSecondary; font.pixelSize: 12; wrapMode: Text.Wrap }
+                                Text { Layout.fillWidth: true; text: "Choose the main shortcuts for Launcher, Actions, and Settings. Changes apply to the current desktop session."; color: Theme.Tokens.textSecondary; font.pixelSize: 12; wrapMode: Text.Wrap }
 
                                 Rectangle {
                                     Layout.fillWidth: true
@@ -1018,7 +1069,82 @@ Item {
                                         }
                                     }
                                 }
-                                Text { Layout.fillWidth: true; text: "Workspace, focus, and shortcut changes are written to the private Phasor session config. A custom Mango config remains in control when one is explicitly selected."; color: Theme.Tokens.textSecondary; font.pixelSize: 11; wrapMode: Text.Wrap }
+                                Text { Layout.fillWidth: true; text: "Workspace, focus, and shortcut changes apply to this session. A separate window profile can override these defaults when selected."; color: Theme.Tokens.textSecondary; font.pixelSize: 11; wrapMode: Text.Wrap }
+                            }
+
+                            ColumnLayout {
+                                visible: preferences.section === "mango"
+                                Layout.fillWidth: true
+                                spacing: Theme.Tokens.spacingM
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Choose how windows fit together across your Spaces. Common workspace, focus, and motion choices live in Shell and Appearance. Open the advanced controls for every layout, spacing, window rule, input, and display option."
+                                    color: Theme.Tokens.textSecondary
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+
+                                Components.PhasorButton {
+                                    text: preferences.advancedMangoOpen ? "Hide advanced controls" : "All layout and window controls"
+                                    onClicked: {
+                                        preferences.advancedMangoOpen = !preferences.advancedMangoOpen
+                                        if (preferences.advancedMangoOpen) {
+                                            preferences.loadMangoConfig()
+                                            Qt.callLater(function() { mangoConfigEditor.forceActiveFocus() })
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    visible: preferences.advancedMangoOpen
+                                    Layout.fillWidth: true
+                                    text: "Source: " + preferences.mangoConfigSource + (preferences.mangoEditable ? " · Appearance, motion, Spaces, focus, and shortcuts stay in sync with their main settings." : " · A separate window configuration is active, so editing is disabled.")
+                                    color: Theme.Tokens.warning
+                                    font.pixelSize: 11
+                                    wrapMode: Text.Wrap
+                                }
+
+                                Rectangle {
+                                    visible: preferences.advancedMangoOpen
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    Layout.minimumHeight: 400
+                                    radius: Theme.Tokens.radiusSmall
+                                    color: Theme.Tokens.background
+                                    border.width: 1
+                                    border.color: Theme.Tokens.separator
+
+                                    ScrollView {
+                                        anchors.fill: parent
+                                        anchors.margins: Theme.Tokens.spacingS
+                                        clip: true
+                                        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                                        ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+                                        TextArea {
+                                            id: mangoConfigEditor
+                                            text: preferences.mangoConfigText
+                                            enabled: preferences.mangoEditable && !preferences.mangoBusy
+                                            selectByMouse: true
+                                            wrapMode: TextEdit.NoWrap
+                                            color: Theme.Tokens.textPrimary
+                                            selectionColor: Theme.Tokens.accent
+                                            selectedTextColor: Theme.Tokens.background
+                                            font.family: "monospace"
+                                            font.pixelSize: 11
+                                            background: Rectangle { color: "transparent" }
+                                            onTextChanged: preferences.mangoConfigText = text
+                                        }
+                                    }
+                                }
+
+                                RowLayout {
+                                    visible: preferences.advancedMangoOpen
+                                    Layout.fillWidth: true
+                                    Text { Layout.fillWidth: true; text: preferences.mangoBusy ? "Checking settings…" : "Advanced configuration · changes apply to this session"; color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
+                                    Components.PhasorButton { text: "Recommended defaults"; enabled: preferences.mangoEditable && !preferences.mangoBusy; onClicked: preferences.resetMangoConfig() }
+                                    Components.PhasorButton { text: preferences.mangoBusy ? "Saving…" : "Save and reload"; enabled: preferences.mangoEditable && !preferences.mangoBusy; onClicked: preferences.saveMangoConfig() }
+                                }
                             }
 
                             ColumnLayout {
@@ -1043,7 +1169,7 @@ Item {
                                             Rectangle {
                                                 Layout.preferredWidth: 64
                                                 Layout.preferredHeight: 64
-                                                radius: 20
+                                                radius: 4
                                                 color: Theme.Tokens.accent
                                                 Text { anchors.centerIn: parent; text: "P"; color: Theme.Tokens.background; font.pixelSize: 34; font.bold: true }
                                             }
@@ -1051,7 +1177,7 @@ Item {
                                                 Layout.fillWidth: true
                                                 spacing: Theme.Tokens.spacingXS
                                                 Text { text: "Phasor"; color: Theme.Tokens.textPrimary; font.pixelSize: 22; font.bold: true }
-                                                Text { text: "A portable desktop shell for MangoWM."; color: Theme.Tokens.textSecondary; font.pixelSize: 12; wrapMode: Text.Wrap }
+                                                Text { text: "A calm, portable desktop for focused work."; color: Theme.Tokens.textSecondary; font.pixelSize: 12; wrapMode: Text.Wrap }
                                             }
                                         }
                                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.Tokens.separator }

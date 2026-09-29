@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -92,6 +93,8 @@ class MangoAdapter:
                 "title": str(row.get("title") or row.get("name") or ""),
                 "appId": str(row.get("appid") or row.get("app_id") or row.get("class") or ""),
                 "focused": bool(row.get("is_focused", row.get("focused", False))) or bool(focused_id and client_id == focused_id),
+                "minimized": bool(row.get("is_minimized", row.get("minimized", False))),
+                "visible": bool(row.get("is_visible", row.get("visible", True))),
                 "floating": bool(row.get("is_floating", row.get("floating", row.get("isfloating", False)))),
                 "fullscreen": bool(row.get("is_fullscreen", row.get("fullscreen", row.get("isfullscreen", False)))),
                 "tags": row.get("tags", row.get("tag", [])),
@@ -172,7 +175,13 @@ class MangoAdapter:
     def minimize(self, client_id: str | None = None) -> dict[str, Any]:
         return self._dispatch("minimized", client_id=client_id)
 
+    def restore_minimized(self, client_id: str) -> dict[str, Any]:
+        return self._dispatch("restore_minimized", client_id=client_id)
+
     def reload_config(self) -> dict[str, Any]:
+        managed_config = os.environ.get("PHASOR_MANAGED_MANGO_CONFIG")
+        if managed_config:
+            return self._dispatch("load_config_file", managed_config)
         return self._dispatch("reload_config")
 
     def switch_space(self, space_id: str) -> dict[str, Any]:

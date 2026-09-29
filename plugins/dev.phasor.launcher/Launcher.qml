@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Widgets
 import "../../shell/theme" as Theme
 import "../../shell/components" as Components
 
@@ -139,8 +140,16 @@ Item {
             searchInput.text = ""
             search()
             loadSpaces()
+            inputFocusTimer.restart()
             Qt.callLater(function() { searchInput.forceActiveFocus() })
         }
+    }
+
+    Timer {
+        id: inputFocusTimer
+        interval: 90
+        repeat: false
+        onTriggered: if (launcher.open) searchInput.forceActiveFocus()
     }
 
     Component.onCompleted: loadSpaces()
@@ -173,6 +182,7 @@ Item {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: launcher.open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         WlrLayershell.namespace: "phasor-launcher"
+        onVisibleChanged: if (visible && launcher.open) inputFocusTimer.restart()
 
         Rectangle {
             anchors.fill: parent
@@ -210,6 +220,8 @@ Item {
                     TextField {
                         id: searchInput
                         Layout.fillWidth: true
+                        focus: launcher.open
+                        activeFocusOnTab: true
                         placeholderText: "Search apps and files"
                         color: Theme.Tokens.textPrimary
                         placeholderTextColor: Theme.Tokens.textSecondary
@@ -311,7 +323,16 @@ Item {
                                 Layout.preferredHeight: 34
                                 radius: Theme.Tokens.radiusSmall
                                 color: modelData.kind === "app" ? Theme.Tokens.appIconSurface : Theme.Tokens.fileIconSurface
-                                Text { anchors.centerIn: parent; text: modelData.kind === "app" ? "A" : "↗"; color: Theme.Tokens.accent; font.pixelSize: 16; font.bold: true }
+                                IconImage {
+                                    id: resultIcon
+                                    anchors.centerIn: parent
+                                    width: 26
+                                    height: 26
+                                    implicitSize: 26
+                                    source: modelData.kind === "app" && modelData.icon ? Quickshell.iconPath(modelData.icon) : ""
+                                    visible: status === Image.Ready
+                                }
+                                Text { anchors.centerIn: parent; visible: !resultIcon.visible; text: modelData.kind === "app" ? (modelData.name.length ? modelData.name.charAt(0).toUpperCase() : "A") : "↗"; color: Theme.Tokens.accent; font.pixelSize: 16; font.bold: true }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -357,8 +378,18 @@ Item {
                                 radius: Theme.Tokens.radiusSmall
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 color: Theme.Tokens.appIconSurface
+                                IconImage {
+                                    id: gridAppIcon
+                                    anchors.centerIn: parent
+                                    width: 32
+                                    height: 32
+                                    implicitSize: 32
+                                    source: modelData.icon ? Quickshell.iconPath(modelData.icon) : ""
+                                    visible: status === Image.Ready
+                                }
                                 Text {
                                     anchors.centerIn: parent
+                                    visible: !gridAppIcon.visible
                                     text: modelData.name.length ? modelData.name.charAt(0).toUpperCase() : "A"
                                     color: Theme.Tokens.accent
                                     font.pixelSize: 18

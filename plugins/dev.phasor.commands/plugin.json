@@ -4,11 +4,26 @@
   "version": "0.1.0",
   "apiVersion": 1,
   "entrypoint": "Commands.qml",
-  "categories": ["overlay", "command-palette"],
-  "capabilities": ["apps.read", "settings.read", "settings.control", "spaces.control"],
+  "categories": [
+    "overlay",
+    "command-palette"
+  ],
+  "capabilities": [
+    "apps.read",
+    "settings.read",
+    "settings.control",
+    "spaces.control"
+  ],
   "permissions": [],
-  "supportedSlots": [],
-  "contributions": [],
+  "supportedSlots": [
+    "launcher.actions"
+  ],
+  "contributions": [
+    {
+      "slot": "launcher.actions",
+      "entrypoint": "LauncherActions.qml"
+    }
+  ],
   "builtin": true,
   "surface": {
     "anchor": "overlay",

@@ -34,10 +34,10 @@
       "enabled": true
     },
     "dev.phasor.dock": {
-      "enabled": false
+      "enabled": true
     },
     "dev.phasor.desktop": {
-      "enabled": true
+      "enabled": false
     },
     "dev.phasor.clipboard": {
       "enabled": true

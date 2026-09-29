@@ -18,8 +18,8 @@ Item {
     readonly property bool dark: requestedScheme === "dark" ||
         (requestedScheme === "system" && systemPalette.window.hslLightness < 0.5)
     readonly property color background: dark ? "#111318" : "#f3f5f8"
-    readonly property color surface: dark ? "#1a1d24" : "#ffffff"
-    readonly property color surfaceRaised: dark ? "#242833" : "#e8ecf2"
+    readonly property color surface: dark ? "#e61a1d24" : "#eaf3f5f8"
+    readonly property color surfaceRaised: dark ? "#e8242833" : "#e8e8ecf2"
     readonly property color textPrimary: dark ? "#f0f1f4" : "#1b2028"
     readonly property color textSecondary: dark ? "#a4aab6" : "#596575"
     readonly property color accent: accentColor
@@ -30,15 +30,16 @@ Item {
     readonly property color overlayScrim: dark ? "#99080a0e" : "#66090d14"
     readonly property color appIconSurface: dark ? "#30394a" : "#dbe5f2"
     readonly property color fileIconSurface: dark ? "#383244" : "#e8def2"
-    readonly property color separator: dark ? "#343943" : "#d5dbe3"
+    readonly property color separator: dark ? "#783e4654" : "#78b6c0cb"
+    readonly property color glassHighlight: dark ? "#38ffffff" : "#aaffffff"
     readonly property int spacingXS: 4
     readonly property int spacingS: 8
     readonly property int spacingM: 12
     readonly property int spacingL: 18
     readonly property int spacingXL: 24
-    readonly property int radiusSmall: 8
-    readonly property int radiusMedium: 14
-    readonly property int radiusLarge: 20
+    readonly property int radiusSmall: 2
+    readonly property int radiusMedium: 4
+    readonly property int radiusLarge: 8
     readonly property int animationFast: reducedMotion ? 0 : 100
     readonly property int animationNormal: reducedMotion ? 0 : 200
     readonly property int animationSlow: reducedMotion ? 0 : 320

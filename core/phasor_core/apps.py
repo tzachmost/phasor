@@ -66,6 +66,16 @@ class AppsService:
                     "exec": command,
                     "terminal": _truth(item.get("Terminal")),
                 })
+        entries.setdefault("phasor-settings", {
+            "id": "phasor-settings",
+            "name": "Settings",
+            "genericName": "Desktop Settings",
+            "comment": "Personalize appearance, workspaces, and window layout",
+            "icon": "preferences-system",
+            "desktopFile": "phasor-settings.desktop",
+            "exec": "phasorctl settings toggle",
+            "terminal": False,
+        })
         self._cache = sorted(entries.values(), key=lambda row: row["name"].casefold())
         return self._cache
 
@@ -115,6 +125,15 @@ class AppsService:
                 ranked.append((score, {**app, "favorite": app["id"] in favorite_ids, "recent": is_recent}))
         ranked.sort(key=lambda item: item[0])
         return {"items": [app for _, app in ranked[:limit]], "total": len(ranked)}
+
+    def icon_for(self, app_id: str) -> str:
+        """Resolve Mango's app id to the icon declared by its desktop entry."""
+        needle = app_id.casefold().removesuffix(".desktop")
+        for app in self.list():
+            desktop_id = str(app["id"]).casefold().removesuffix(".desktop")
+            if needle in {desktop_id, Path(desktop_id).name}:
+                return str(app.get("icon", ""))
+        return ""
 
     def favorite(self, app_id: str, enabled: bool) -> dict[str, Any]:
         if not isinstance(enabled, bool):

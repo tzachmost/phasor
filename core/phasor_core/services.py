@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -43,6 +44,7 @@ METHOD_CAPABILITIES = {
     "windows.maximize": "windows.control",
     "windows.fullscreen": "windows.control",
     "windows.minimize": "windows.control",
+    "windows.restore": "windows.control",
     "clipboard.history": "clipboard.read",
     "clipboard.toggle": "clipboard.read",
     "clipboard.copy": "clipboard.write",
@@ -52,6 +54,9 @@ METHOD_CAPABILITIES = {
     "theme.get": "theme.read",
     "settings.get": "settings.read",
     "settings.update": "settings.control",
+    "mango.config.get": "settings.read",
+    "mango.config.update": "settings.control",
+    "mango.config.reset": "settings.control",
     "audio.status": "audio.read",
     "audio.get_volume": "audio.read",
     "audio.set_volume": "audio.control",
@@ -79,6 +84,11 @@ class Services:
         self.plugins = PluginManager()
         self.system = SystemService()
         self._snapshot: dict[str, Any] = self.mango.snapshot()
+        try:
+            from .theme_export import apply_universal_theme
+            apply_universal_theme(load_theme())
+        except (OSError, ValueError) as exc:
+            logging.getLogger("phasor.core").warning("Could not apply toolkit theme: %s", exc)
 
     def refresh(self) -> dict[str, Any]:
         state = self.mango.snapshot()
@@ -121,7 +131,7 @@ class Services:
             return {"toggled": True}
         if method == "settings.toggle":
             section = params.get("section")
-            if section not in {None, "appearance", "shell", "system", "shortcuts", "about"}:
+            if section not in {None, "appearance", "shell", "system", "shortcuts", "mango", "about"}:
                 raise ValueError("Unknown Settings section")
             self.publish({"type": "action", "name": "settings.toggle", "data": {"section": section}})
             return {"toggled": True}
@@ -145,8 +155,12 @@ class Services:
             result = load_settings()
             event_data = {"keys": sorted(patch)}
             launcher_patch = patch.get("launcher")
+            appearance_patch = patch.get("appearance")
             mango_settings_changed = bool({"spaces", "windows", "commands", "settings"}.intersection(patch)) or (
                 isinstance(launcher_patch, dict) and "shortcut" in launcher_patch
+            ) or (
+                isinstance(appearance_patch, dict)
+                and {"theme", "accent", "reducedMotion"}.intersection(appearance_patch)
             )
             managed_mango_config = os.environ.get("PHASOR_MANAGED_MANGO_CONFIG")
             if mango_settings_changed:
@@ -184,7 +198,13 @@ class Services:
                             "name": plugin_id,
                             "data": {"id": plugin_id, "enabled": is_enabled},
                         })
-            appearance_patch = patch.get("appearance")
+            if isinstance(appearance_patch, dict) and {"theme", "accent"}.intersection(appearance_patch):
+                try:
+                    from .theme_export import apply_universal_theme
+                    apply_universal_theme(load_theme())
+                    event_data["toolkitTheme"] = {"applied": True}
+                except (OSError, ValueError) as exc:
+                    event_data["toolkitTheme"] = {"applied": False, "error": str(exc)}
             if isinstance(appearance_patch, dict) and {"theme", "wallpaper"}.intersection(appearance_patch):
                 theme = load_theme()
                 try:
@@ -193,6 +213,36 @@ class Services:
                     event_data["wallpaper"] = {"error": str(exc)}
             self.publish({"type": "event", "name": "settings.changed", "data": event_data})
             return result
+        if method == "mango.config.get":
+            from .config import load_settings
+            from .mango_config import editor_config
+            external_config = os.environ.get("PHASOR_MANGO_CONFIG")
+            if external_config:
+                from pathlib import Path
+                path = Path(external_config).expanduser()
+                content = path.read_text(encoding="utf-8")
+                return {"config": content, "source": "external: " + str(path), "editable": False}
+            content, source = editor_config(load_settings())
+            return {"config": content, "source": source, "editable": True}
+        if method in {"mango.config.update", "mango.config.reset"}:
+            runtime = os.environ.get("PHASOR_MANAGED_MANGO_CONFIG")
+            if not runtime:
+                raise ValueError("Mango's active config is externally managed; start Phasor with its managed Mango session to edit it here")
+            from .config import load_settings
+            from .mango_config import reset_editor_config, save_editor_config
+            settings = load_settings()
+            if method == "mango.config.update":
+                config_text = params.get("config")
+                if not isinstance(config_text, str):
+                    raise ValueError("config must be text")
+                reset = False
+                save_editor_config(settings, config_text, runtime)
+            else:
+                reset = True
+                reset_editor_config(settings, runtime)
+            result = self.mango.reload_config()
+            self.publish({"type": "event", "name": "mango.configChanged", "data": {"reset": reset}})
+            return {"saved": True, "reloaded": True, "source": "installed defaults" if reset else "user", **result}
         if method == "plugins.list":
             return self.plugins.list()
         if method == "plugins.enable":
@@ -268,7 +318,8 @@ class Services:
         if method == "spaces.next":
             return self.mango.adjacent_space("right", move=_boolean(params.get("move", False), "move"))
         if method == "windows.list":
-            return {"items": self.snapshot().get("windows", [])}
+            items = self.snapshot().get("windows", [])
+            return {"items": [{**window, "icon": self.apps.icon_for(str(window.get("appId", "")))} for window in items]}
         if method.startswith("windows."):
             action = method.split(".", 1)[1]
             client_id = str(params["id"]) if params.get("id") is not None else None
@@ -286,6 +337,8 @@ class Services:
                 return self.mango.fullscreen(client_id)
             if action == "minimize":
                 return self.mango.minimize(client_id)
+            if action == "restore" and client_id:
+                return self.mango.restore_minimized(client_id)
         if method == "files.status":
             return self.files.status()
         if method == "clipboard.history":
