@@ -67,4 +67,4 @@ The first Preview milestone is complete. Continue toward a broader document and 
 - [x] Browse animated image frames and export or print a selected frame.
 - [x] Exercise Preview with a public multi-field form, a bookmarked and digitally signed PDF, a 96-page annual report, and a 600-dpi scan.
 - [x] Extract freeform selections from images into transparent PNG copies.
-- [ ] Exercise printing against a configured CUPS printer queue.
+- [x] Exercise printing against a configured CUPS printer queue (temporary local IPP queue; physical output remains unverified).

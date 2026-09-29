@@ -1711,6 +1711,8 @@ class PreviewExportTests(unittest.TestCase):
 
         self.assertIn(["-d", "Office"], [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)])
         self.assertIn(["-n", "2"], [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)])
+        command_pairs = [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)]
+        self.assertIn(["-o", "print-scaling=none"], command_pairs)
         self.assertIn(["-P", "1"], [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)])
         self.assertTrue(result["ok"])
         self.assertEqual(result["printer"], "Office")

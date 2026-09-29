@@ -12,9 +12,9 @@ Arch/CachyOS, Fedora, Universal Blue/OSTree, and NixOS install, update, diagnost
 
 ## Latest validation
 
-- All 119 tests pass in the Nix Python environment, including optional pyHanko signing, animated-frame export/print, image-flip checks, lasso extraction with alpha/transforms/frame selection, password-protected PDF handling, copy-based size reduction, page insertion, image background-removal, text-anchored markup, OCR transforms and language selection, searchable-PDF preparation, form privacy, signature guards, and CUPS preparation. `git diff --check` passes.
+- All 119 tests pass in the Nix Python environment, including optional pyHanko signing, animated-frame export/print, image-flip checks, lasso extraction with alpha/transforms/frame selection, password-protected PDF handling, copy-based size reduction, page insertion, image background-removal, text-anchored markup, OCR transforms and language selection, searchable-PDF preparation, form privacy, signature guards, and CUPS preparation. The print helper disables CUPS page scaling because this host's automatic `pdftopdf` fit pass drops page content. `git diff --check` passes.
 - The default Nix package and optional `preview-background-removal` and `preview-ocr` outputs built on x86_64; `nix flake check --no-build --all-systems` passed for x86_64 and aarch64.
-- Mocked CUPS submissions confirmed that reordered and cropped/rotated PDFs are prepared without modifying their sources. The LAN Samsung C43x responds over IPP but reports `stopped`, `Printer is not able to print`, and `printer-is-accepting-jobs=false`; no job was sent to it. A temporary CUPS-PDF queue accepted jobs but produced blank PDFs even though the prepared input PDF contained page content. That queue and the generated PDFs were removed. Physical print output remains unverified.
+- Mocked CUPS submissions confirmed that reordered and cropped/rotated PDFs are prepared without modifying their sources. A temporary local IPP queue reproduced blank pages with automatic CUPS scaling; Preview's print helper now requests no additional scaling, and the queue received the prepared PDF with its text intact. The test queue and files were removed afterward. The LAN Samsung C43x responds over IPP but reports `stopped`, `Printer is not able to print`, and `printer-is-accepting-jobs=false`; no job was sent to it, so physical print output remains unverified.
 - Preview opened a local PDF form fixture in a fresh Quickshell process on the desktop. The app rendered the page, thumbnail, navigation, export, and More controls; the Quickshell log had no QML warnings or errors. Image Preview was also inspected during the earlier viewer milestone.
 - The current Preview QML configuration loaded in an isolated offscreen Quickshell process with certificate signing, multiline fields, editable choices, masked password fields, and stdin-based document operations. The only warnings were from running as root without the Phasor core service, so it could not read user theme settings.
 - An offscreen QML regression harness loaded a one-page PDF then a two-page PDF through the same viewer, and confirmed that password form values stay out of sidecar serialization while remaining available to explicit output serialization.
@@ -39,7 +39,7 @@ Arch/CachyOS, Fedora, Universal Blue/OSTree, and NixOS install, update, diagnost
 
 ## Next work
 
-1. Exercise printing against a ready physical CUPS printer queue.
+1. Recheck physical print output when a CUPS printer queue is ready; the discovered LAN printer is currently stopped.
 2. Submit the stable Arch recipe metadata to the AUR after an AUR SSH public key is registered. No SSH key is currently present in `~/.ssh`.
 
 ## Development notes

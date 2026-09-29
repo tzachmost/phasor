@@ -1857,7 +1857,10 @@ def print_document(source_value: str, options: dict[str, Any]) -> dict[str, Any]
             )
             _image_pdf(image_path, pdf_path)
 
-        command = [lp, "-n", str(copies)]
+        # Some CUPS filter builds drop page content during automatic scaling.
+        # Preview's prepared PDF already has explicit page geometry, so keep
+        # that geometry unchanged during CUPS filtering.
+        command = [lp, "-n", str(copies), "-o", "print-scaling=none"]
         if page_range:
             from pypdf import PdfReader
 
