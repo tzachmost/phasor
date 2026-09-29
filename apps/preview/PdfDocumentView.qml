@@ -14,6 +14,7 @@ Item {
     property real userZoom: 1
     property bool showThumbnails: true
     property var pageAnnotations: ({})
+    property var formValues: ({})
     property var pageOrder: []
     property var savedPageOrder: null
     property var pageRotations: ({})
@@ -31,6 +32,7 @@ Item {
 
     function loadMarkup(value) {
         pageAnnotations = value && value.pages ? value.pages : ({})
+        formValues = value && value.form_values ? value.form_values : ({})
         savedPageOrder = value && Array.isArray(value.page_order) ? value.page_order.slice() : null
         pageRotations = value && value.page_rotations ? value.page_rotations : ({})
         Qt.callLater(applySavedPageOperations)
@@ -73,8 +75,16 @@ Item {
             kind: "pdf",
             pages: next,
             page_order: pageOrder,
-            page_rotations: pageRotations
+            page_rotations: pageRotations,
+            form_values: formValues
         }
+    }
+
+    function setFormValue(name, value) {
+        const next = Object.assign({}, formValues)
+        next[name] = value
+        formValues = next
+        markupChanged()
     }
 
     function addText(x, y, text) {
@@ -175,6 +185,7 @@ Item {
         source: root.source
         onSourceChanged: {
             root.pageAnnotations = ({})
+            root.formValues = ({})
             root.pageOrder = []
             root.savedPageOrder = null
             root.pageRotations = ({})

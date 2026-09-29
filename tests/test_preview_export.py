@@ -1,7 +1,9 @@
 import io
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
 try:
     from PIL import Image
@@ -10,7 +12,7 @@ try:
 except ImportError as error:
     raise unittest.SkipTest(f"Preview export dependencies are not installed: {error}")
 
-from apps.preview.document_ops import export_image, export_pdf
+from apps.preview.document_ops import export_image, export_pdf, inspect_pdf_forms, print_document
 
 
 class PreviewExportTests(unittest.TestCase):
@@ -24,6 +26,25 @@ class PreviewExportTests(unittest.TestCase):
     def make_image(self, name="source.png"):
         source = self.root / name
         Image.new("RGB", (20, 10), "white").save(source)
+        return source
+
+    def make_form_pdf(self, name="form.pdf"):
+        source = self.root / name
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(300, 200))
+        page_canvas.acroForm.textfield(
+            name="full_name", tooltip="Full name", x=40, y=140, width=180, height=24, value=""
+        )
+        page_canvas.acroForm.checkbox(
+            name="accept_terms", tooltip="Accept terms", x=40, y=100, size=14, checked=False
+        )
+        page_canvas.acroForm.choice(
+            name="country", tooltip="Country", x=40, y=55, width=120, height=22,
+            options=["Poland", "Canada"], value="Poland",
+        )
+        page_canvas.showPage()
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
         return source
 
     def test_image_export_crops_rotates_resizes_and_flattens_markup(self):
@@ -243,6 +264,150 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(tuple(map(float, exported_page.mediabox)), (10, 20, 210, 120))
         self.assertEqual(tuple(map(float, exported_page.cropbox)), (30, 35, 170, 105))
         self.assertIn(b"44 84 42 14 re", exported_page.get_contents().get_data())
+
+    def test_pdf_forms_can_be_discovered_filled_and_saved_as_a_copy(self):
+        source = self.make_form_pdf()
+        output = self.root / "filled-form.pdf"
+
+        form_info = inspect_pdf_forms(str(source))
+        fields = {field["name"]: field for field in form_info["fields"]}
+        self.assertEqual(fields["full_name"]["type"], "text")
+        self.assertEqual(fields["accept_terms"]["type"], "checkbox")
+        self.assertEqual(fields["country"]["type"], "choice")
+        self.assertEqual(fields["full_name"]["pages"], [1])
+
+        export_pdf(
+            str(source),
+            str(output),
+            {
+                "markup": {
+                    "version": 1,
+                    "kind": "pdf",
+                    "pages": {},
+                    "form_values": {
+                        "full_name": "Ada Lovelace",
+                        "accept_terms": "/Yes",
+                        "country": "Canada",
+                    },
+                }
+            },
+        )
+
+        values = PdfReader(output).get_fields()
+        self.assertEqual(values["full_name"]["/V"], "Ada Lovelace")
+        self.assertEqual(str(values["accept_terms"]["/V"]), "/Yes")
+        self.assertEqual(values["country"]["/V"], "Canada")
+        output_page = PdfReader(output).pages[0]
+        widgets = {
+            str(reference.get_object().get("/T")): reference.get_object()
+            for reference in output_page.get("/Annots", [])
+        }
+        name_appearance = widgets["full_name"]["/AP"]["/N"].get_object()
+        self.assertIn(b"(Ada Lovelace) Tj", name_appearance.get_data())
+        self.assertEqual(str(widgets["accept_terms"].get("/AS")), "/Yes")
+        self.assertEqual(PdfReader(source).get_fields()["full_name"]["/V"], "")
+
+    def test_pdf_signature_markup_exports_as_vector_strokes(self):
+        source = self.root / "signature.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
+        page_canvas.showPage()
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        output = self.root / "signed-visually.pdf"
+
+        export_pdf(
+            str(source),
+            str(output),
+            {
+                "markup": {
+                    "version": 1,
+                    "kind": "pdf",
+                    "pages": {
+                        "0": [
+                            {
+                                "type": "signature",
+                                "points": [[0.1, 0.2], [0.5, 0.5], [0.9, 0.2]],
+                                "width": 0.02,
+                                "color": "#112233",
+                            }
+                        ]
+                    },
+                }
+            },
+        )
+
+        content = PdfReader(output).pages[0].get_contents().get_data()
+        self.assertIn(b"20 80 m", content)
+        self.assertIn(b"180 80 l", content)
+        self.assertIn(b"S", content)
+
+    def test_print_submits_a_flattened_copy_with_printer_options(self):
+        source = self.root / "print-source.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
+        page_canvas.drawString(20, 50, "FIRST PRINT PAGE")
+        page_canvas.showPage()
+        page_canvas.drawString(20, 50, "SECOND PRINT PAGE")
+        page_canvas.showPage()
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        commands = []
+
+        def submit(command, **kwargs):
+            commands.append(command)
+            printed = PdfReader(command[-1])
+            self.assertEqual(len(printed.pages), 1)
+            self.assertIn("SECOND PRINT PAGE", printed.pages[0].extract_text())
+            return SimpleNamespace(returncode=0, stdout="request id is Office-42", stderr="")
+
+        with patch("apps.preview.document_ops.shutil.which", return_value="/usr/bin/lp"):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=submit):
+                result = print_document(
+                    str(source),
+                    {
+                        "markup": {
+                            "version": 1,
+                            "kind": "pdf",
+                            "pages": {},
+                            "page_order": [1],
+                        },
+                        "printer": "Office",
+                        "copies": 2,
+                        "pages": "1",
+                    },
+                )
+
+        self.assertIn(["-d", "Office"], [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)])
+        self.assertIn(["-n", "2"], [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)])
+        self.assertIn(["-P", "1"], [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["printer"], "Office")
+
+    def test_print_converts_marked_up_image_to_single_page_pdf(self):
+        source = self.make_image()
+
+        def submit(command, **kwargs):
+            printed = PdfReader(command[-1])
+            self.assertEqual(len(printed.pages), 1)
+            self.assertGreater(float(printed.pages[0].mediabox.width), 20)
+            return SimpleNamespace(returncode=0, stdout="job-1", stderr="")
+
+        with patch("apps.preview.document_ops.shutil.which", return_value="/usr/bin/lp"):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=submit):
+                result = print_document(
+                    str(source),
+                    {"markup": {"version": 1, "kind": "image", "annotations": []}},
+                )
+        self.assertTrue(result["ok"])
+
+    def test_print_options_reject_command_injection_and_invalid_ranges(self):
+        from apps.preview.document_ops import _validated_print_options
+
+        with self.assertRaisesRegex(ValueError, "printer name"):
+            _validated_print_options({"printer": "Office; touch /tmp/unsafe"})
+        with self.assertRaisesRegex(ValueError, "ascending"):
+            _validated_print_options({"pages": "5-2"})
 
 
 if __name__ == "__main__":

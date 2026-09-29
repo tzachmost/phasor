@@ -7,6 +7,9 @@ import io
 import json
 import math
 import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -121,7 +124,7 @@ def _draw_image_markup(image, annotations: list[dict[str, Any]]) -> None:
         color, opacity = _color(mark["color"])
         rgba = (*color, round(opacity * 255))
         line_width = max(2, round(mark.get("width", 0.006) * unit))
-        if mark["type"] == "stroke":
+        if mark["type"] in {"stroke", "signature"}:
             points = [(round(x * width), round(y * height)) for x, y in mark["points"]]
             if len(points) == 1:
                 radius = line_width / 2
@@ -302,7 +305,7 @@ def _draw_pdf_markup(
         rgb, alpha = _color(mark["color"])
         red, green, blue = _rgb01(rgb)
         line_width = max(0.75, mark.get("width", 0.006) * unit)
-        if mark["type"] == "stroke":
+        if mark["type"] in {"stroke", "signature"}:
             points = [
                 (origin_x + x * width, origin_y + height - y * height)
                 for x, y in mark["points"]
@@ -394,6 +397,161 @@ def _pdf_overlay(page, annotations: list[dict[str, Any]]):
     return overlay_page
 
 
+def _field_name(annotation: Any) -> str:
+    names: list[str] = []
+    current = annotation
+    seen: set[int] = set()
+    while current is not None:
+        identity = id(current)
+        if identity in seen:
+            break
+        seen.add(identity)
+        name = current.get("/T")
+        if name is not None:
+            names.append(str(name))
+        parent = current.get("/Parent")
+        current = parent.get_object() if parent is not None else None
+    return ".".join(reversed(names))
+
+
+def _field_options(field: Any) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    for option in field.get("/Opt", []):
+        if not isinstance(option, str) and hasattr(option, "__iter__"):
+            values = list(option)
+            if not values:
+                continue
+            value = str(values[0])
+            label = str(values[1]) if len(values) > 1 else value
+        else:
+            value = label = str(option)
+        options.append({"value": value, "label": label})
+    return options
+
+
+def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
+    try:
+        from pypdf import PdfReader
+    except ImportError as error:
+        raise ValueError("PDF forms need pypdf. Install the python-pypdf package.") from error
+
+    source = _source_path(source_value)
+    try:
+        reader = PdfReader(str(source), strict=False)
+        if reader.is_encrypted:
+            raise ValueError("Password-protected PDF forms cannot be opened in Preview yet")
+        fields = reader.get_fields() or {}
+        pages_by_field: dict[str, set[int]] = {}
+        widget_states: dict[str, set[str]] = {}
+        for page_number, page in enumerate(reader.pages, start=1):
+            for reference in page.get("/Annots", []):
+                widget = reference.get_object()
+                if widget.get("/Subtype") != "/Widget":
+                    continue
+                name = _field_name(widget)
+                if not name:
+                    continue
+                pages_by_field.setdefault(name, set()).add(page_number)
+                appearance = widget.get("/AP", {}).get("/N")
+                if appearance is not None:
+                    appearance = appearance.get_object()
+                    if hasattr(appearance, "keys"):
+                        states = widget_states.setdefault(name, set())
+                        states.update(str(value) for value in appearance.keys())
+
+        result: list[dict[str, Any]] = []
+        for name, field in fields.items():
+            field_type = str(field.get("/FT", ""))
+            flags = int(field.get("/Ff", 0))
+            options = _field_options(field)
+            states = field.get("/_States_", [])
+            if not states:
+                states = sorted(widget_states.get(name, set()))
+            states = list(dict.fromkeys(str(value) for value in states))
+            if field_type == "/Tx":
+                kind = "text"
+            elif field_type == "/Ch":
+                kind = "multi_choice" if flags & (1 << 21) else "choice"
+            elif field_type == "/Btn":
+                if flags & (1 << 16):
+                    kind = "unsupported"
+                elif flags & (1 << 15):
+                    kind = "radio"
+                    options = [{"value": state, "label": state.removeprefix("/")} for state in states if state != "/Off"]
+                else:
+                    kind = "checkbox"
+                    options = [{"value": state, "label": state.removeprefix("/")} for state in states if state != "/Off"]
+            elif field_type == "/Sig":
+                kind = "signature"
+            else:
+                kind = "unsupported"
+
+            raw_value = field.get("/V", "")
+            if isinstance(raw_value, (list, tuple)):
+                value: str | list[str] = [str(item) for item in raw_value]
+            else:
+                value = str(raw_value)
+            result.append({
+                "name": str(name),
+                "label": str(field.get("/TU") or name),
+                "type": kind,
+                "value": value,
+                "required": bool(flags & (1 << 1)),
+                "read_only": bool(flags & 1),
+                "options": options,
+                "pages": sorted(pages_by_field.get(name, set())),
+            })
+        return {"ok": True, "fields": result}
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError(f"Could not read PDF form fields: {error}") from error
+
+
+def _validated_pdf_form_values(reader: Any, values: dict[str, Any]) -> dict[str, Any]:
+    if not values:
+        return {}
+    fields = reader.get_fields() or {}
+    unknown = sorted(set(values) - set(fields))
+    if unknown:
+        raise ValueError(f"The PDF no longer has these form fields: {', '.join(unknown[:5])}")
+
+    normalized: dict[str, Any] = {}
+    for name, value in values.items():
+        field = fields[name]
+        field_type = str(field.get("/FT", ""))
+        flags = int(field.get("/Ff", 0))
+        if field_type == "/Btn":
+            if not isinstance(value, str):
+                raise ValueError(f"The value for {name} must be a checkbox or radio option")
+            states = field.get("/_States_", [])
+            allowed = {str(state) for state in states}
+            if not value.startswith("/"):
+                value = "/" + value
+            if allowed and value not in allowed:
+                raise ValueError(f"{value} is not a valid option for {name}")
+            normalized[name] = value
+        elif field_type == "/Tx":
+            if not isinstance(value, str):
+                raise ValueError(f"The value for {name} must be text")
+            normalized[name] = value
+        elif field_type == "/Ch":
+            allowed = {option["value"] for option in _field_options(field)}
+            if isinstance(value, list):
+                if not flags & (1 << 21) or any(not isinstance(item, str) for item in value):
+                    raise ValueError(f"The value for {name} must be a single choice")
+                if allowed and not set(value).issubset(allowed):
+                    raise ValueError(f"The value for {name} contains an unknown choice")
+            elif not isinstance(value, str):
+                raise ValueError(f"The value for {name} must be a choice")
+            elif allowed and value not in allowed:
+                raise ValueError(f"{value} is not a valid choice for {name}")
+            normalized[name] = value
+        else:
+            raise ValueError(f"The field {name} cannot be filled by Preview")
+    return normalized
+
+
 def _validated_pdf_order(value: Any, page_count: int) -> list[int]:
     if value is None:
         return list(range(page_count))
@@ -430,8 +588,11 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
             raise ValueError("The PDF has no pages to export")
         page_order = _validated_pdf_order(markup.get("page_order"), source_page_count)
         rotations = markup.get("page_rotations", {})
+        form_values = _validated_pdf_form_values(reader, markup.get("form_values", {}))
         writer = PdfWriter()
         writer.append(reader, pages=page_order)
+        if form_values:
+            writer.update_page_form_field_values(None, form_values, auto_regenerate=False)
 
         source_to_output = {source_index: output_index for output_index, source_index in enumerate(page_order)}
         for source_index, output_index in source_to_output.items():
@@ -457,17 +618,140 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
     return {"ok": True, "path": str(output), "pages": len(page_order)}
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) != 5 or argv[1] not in {"image", "pdf"}:
-        print(json.dumps({"error": "Usage: document_ops.py image|pdf SOURCE OUTPUT OPTIONS_JSON"}))
-        return 2
+def list_printers() -> dict[str, Any]:
+    if not shutil.which("lp"):
+        return {"ok": False, "printers": [], "error": "Printing needs CUPS command-line tools (lp)."}
+    lpstat = shutil.which("lpstat")
+    if not lpstat:
+        return {"ok": True, "printers": [], "default": "", "message": "No printer list command is available."}
     try:
-        options = json.loads(argv[4])
-        if not isinstance(options, dict):
-            raise ValueError("Export options must be an object")
-        result = export_image(argv[2], argv[3], options) if argv[1] == "image" else export_pdf(argv[2], argv[3], options)
+        result = subprocess.run([lpstat, "-p", "-d"], capture_output=True, text=True, timeout=8, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"ok": False, "printers": [], "error": f"Could not query printers: {error}"}
+    output = result.stdout + "\n" + result.stderr
+    printers = sorted(set(re.findall(r"(?m)^printer\s+(\S+)\s+is\b", output)))
+    default_match = re.search(r"(?m)^system default destination:\s*(\S+)\s*$", output)
+    default = default_match.group(1) if default_match and default_match.group(1) != "none" else ""
+    if result.returncode and not printers:
+        return {"ok": False, "printers": [], "default": default, "error": output.strip() or "No printers are configured."}
+    return {"ok": True, "printers": printers, "default": default}
+
+
+def _validated_print_options(options: dict[str, Any]) -> tuple[str, int, str]:
+    printer = options.get("printer", "")
+    if not isinstance(printer, str) or len(printer) > 256 or (
+        printer and not re.fullmatch(r"[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)?", printer)
+    ):
+        raise ValueError("The selected printer name is invalid")
+    copies = options.get("copies", 1)
+    if isinstance(copies, bool) or not isinstance(copies, int) or copies < 1 or copies > 99:
+        raise ValueError("Copies must be between 1 and 99")
+    page_range = options.get("pages", "")
+    if not isinstance(page_range, str) or len(page_range) > 256:
+        raise ValueError("The page range is invalid")
+    if page_range:
+        if not re.fullmatch(r"[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*", page_range):
+            raise ValueError("Use page numbers or ranges such as 1-3,5")
+        for part in page_range.split(","):
+            ends = [int(item) for item in part.split("-")]
+            if min(ends) < 1 or max(ends) > 20_000 or (len(ends) == 2 and ends[0] > ends[1]):
+                raise ValueError("Page numbers must be valid and ranges must be in ascending order")
+    return printer, copies, page_range
+
+
+def _image_pdf(image_path: Path, output_path: Path) -> None:
+    Image, _, _, _ = _optional_image_stack()
+    from reportlab.lib.utils import ImageReader
+
+    with Image.open(image_path) as image:
+        width, height = image.size
+        page_width, page_height = (841.89, 595.28) if width > height else (595.28, 841.89)
+        margin = 36
+        scale = min((page_width - margin * 2) / width, (page_height - margin * 2) / height)
+        draw_width = width * scale
+        draw_height = height * scale
+        pdf_canvas = _reportlab_stack()[2].Canvas(
+            str(output_path), pagesize=(page_width, page_height), pageCompression=1
+        )
+        pdf_canvas.drawImage(
+            ImageReader(image.copy()),
+            (page_width - draw_width) / 2,
+            (page_height - draw_height) / 2,
+            width=draw_width,
+            height=draw_height,
+            mask="auto",
+        )
+        pdf_canvas.showPage()
+        pdf_canvas.save()
+
+
+def print_document(source_value: str, options: dict[str, Any]) -> dict[str, Any]:
+    source = _source_path(source_value)
+    printer, copies, page_range = _validated_print_options(options)
+    lp = shutil.which("lp")
+    if not lp:
+        raise ValueError("Printing needs CUPS command-line tools (lp). Install cups on Arch or cups-client on Fedora.")
+
+    markup = validate_payload(options.get("markup", {"version": 1, "kind": "pdf" if source.suffix.lower() == ".pdf" else "image"}))
+    with tempfile.TemporaryDirectory(prefix="phasor-preview-print-") as temporary:
+        temporary_root = Path(temporary)
+        pdf_path = temporary_root / "phasor-print.pdf"
+        if source.suffix.lower() == ".pdf":
+            export_pdf(str(source), str(pdf_path), {"markup": markup})
+        else:
+            if markup["kind"] != "image":
+                raise ValueError("Image printing requires image markup")
+            image_path = temporary_root / "phasor-print.png"
+            export_image(
+                str(source),
+                str(image_path),
+                {
+                    "markup": markup,
+                    "crop": options.get("crop"),
+                    "rotation": options.get("rotation", 0),
+                    "quality": 100,
+                },
+            )
+            _image_pdf(image_path, pdf_path)
+
+        command = [lp, "-n", str(copies)]
+        if printer:
+            command.extend(["-d", printer])
+        if page_range:
+            command.extend(["-P", page_range])
+        command.append(str(pdf_path))
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+        except subprocess.TimeoutExpired as error:
+            raise ValueError("The print service did not respond within 60 seconds") from error
+        except OSError as error:
+            raise ValueError(f"Could not start the print service: {error}") from error
+        if result.returncode != 0:
+            message = result.stderr.strip() or result.stdout.strip() or "The print service rejected the job"
+            raise ValueError(message)
+        return {"ok": True, "job": result.stdout.strip(), "printer": printer, "copies": copies}
+
+
+def main(argv: list[str]) -> int:
+    try:
+        if len(argv) == 2 and argv[1] == "printers":
+            result = list_printers()
+        elif len(argv) == 3 and argv[1] == "forms":
+            result = inspect_pdf_forms(argv[2])
+        elif len(argv) == 4 and argv[1] == "print":
+            options = json.loads(argv[3])
+            if not isinstance(options, dict):
+                raise ValueError("Print options must be an object")
+            result = print_document(argv[2], options)
+        elif len(argv) == 5 and argv[1] in {"image", "pdf"}:
+            options = json.loads(argv[4])
+            if not isinstance(options, dict):
+                raise ValueError("Export options must be an object")
+            result = export_image(argv[2], argv[3], options) if argv[1] == "image" else export_pdf(argv[2], argv[3], options)
+        else:
+            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON | image|pdf SOURCE OUTPUT OPTIONS_JSON")
         print(json.dumps(result, ensure_ascii=False))
-        return 0
+        return 0 if result.get("ok", True) else 1
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False))
         return 1

@@ -30,6 +30,12 @@ ApplicationWindow {
     property string searchText: ""
     property string saveStatus: ""
     property string markupLoadPath: ""
+    property string formsLoadPath: ""
+    property var formFields: []
+    property string formsStatus: ""
+    property var printerNames: []
+    property string defaultPrinter: ""
+    property string printerStatus: ""
     property var loadedMarkup: ({})
     property var pendingTextPosition: ({ x: 0, y: 0 })
     property string helperPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/markup_store.py"
@@ -61,12 +67,18 @@ ApplicationWindow {
         searchText = ""
         saveStatus = ""
         loadedMarkup = ({})
+        formFields = []
+        formsStatus = isPdf ? "Loading form fields…" : ""
         activeTool = "select"
         autosaveTimer.stop()
         if (viewerLoader.item && viewerLoader.item.resetDocument) viewerLoader.item.resetDocument()
         if (viewerLoader.item && viewerLoader.item.loadMarkup) viewerLoader.item.loadMarkup(loadedMarkup)
         markupLoadPath = sourcePath
         loadProcess.exec(["python3", helperPath, "load", sourcePath])
+        if (isPdf) {
+            formsLoadPath = sourcePath
+            formsProcess.exec(["python3", documentOpsPath, "forms", sourcePath])
+        }
     }
 
     function zoomBy(factor) {
@@ -127,6 +139,39 @@ ApplicationWindow {
             JSON.stringify(options)
         ])
         saveStatus = "Exporting a copy…"
+    }
+
+    function formValue(field) {
+        const values = viewerLoader.item && viewerLoader.item.formValues ? viewerLoader.item.formValues : ({})
+        return Object.prototype.hasOwnProperty.call(values, field.name) ? values[field.name] : field.value
+    }
+
+    function setFormValue(field, value) {
+        if (viewerLoader.item && viewerLoader.item.setFormValue) viewerLoader.item.setFormValue(field.name, value)
+    }
+
+    function openPrintDialog() {
+        if (!sourcePath || !viewerLoader.item) return
+        printerStatus = "Checking available printers…"
+        printerProcess.exec(["python3", documentOpsPath, "printers"])
+        printDialog.open()
+    }
+
+    function submitPrint() {
+        if (!sourcePath || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
+        const options = {
+            markup: viewerLoader.item.serializeMarkup(),
+            printer: printerInput.currentIndex > 0 ? printerInput.currentText : "",
+            copies: copyInput.value,
+            pages: pageRangeInput.text.trim()
+        }
+        if (!root.isPdf) {
+            options.crop = viewerLoader.item.cropRect || null
+            options.rotation = viewerLoader.item.rotation || 0
+        }
+        printProcess.exec(["python3", documentOpsPath, "print", sourcePath, JSON.stringify(options)])
+        printDialog.close()
+        saveStatus = "Preparing print job…"
     }
 
     function setMarkColor(color) {
@@ -220,6 +265,26 @@ ApplicationWindow {
     }
 
     Process {
+        id: formsProcess
+        command: ["python3"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (root.formsLoadPath !== root.sourcePath) return
+                try {
+                    const result = JSON.parse(text)
+                    root.formFields = result.fields || []
+                    root.formsStatus = result.error
+                        || (root.formFields.length > 0 ? root.formFields.length + " fields found" : "This PDF has no editable form fields.")
+                } catch (error) {
+                    root.formFields = []
+                    root.formsStatus = "Could not read PDF form fields"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview forms:", text) }
+    }
+
+    Process {
         id: saveProcess
         command: ["python3"]
         stdout: StdioCollector {
@@ -251,6 +316,44 @@ ApplicationWindow {
             }
         }
         stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview export:", text) }
+    }
+
+    Process {
+        id: printerProcess
+        command: ["python3"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.printerNames = result.printers || []
+                    root.defaultPrinter = result.default || ""
+                    root.printerStatus = result.error || result.message || ""
+                } catch (error) {
+                    root.printerNames = []
+                    root.defaultPrinter = ""
+                    root.printerStatus = "Could not query printers"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview printers:", text) }
+    }
+
+    Process {
+        id: printProcess
+        command: ["python3"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.saveStatus = result.ok
+                        ? "Sent to " + (result.printer || "the system printer") + (result.job ? " · " + result.job : "")
+                        : (result.error || "Could not print this document")
+                } catch (error) {
+                    root.saveStatus = "Could not print this document"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview print:", text) }
     }
 
     Timer {
@@ -316,6 +419,14 @@ ApplicationWindow {
                 ToolAction { text: "Save marks"; enabled: Boolean(root.sourcePath && viewerLoader.item && (!root.isPdf || viewerLoader.item.sourcePage >= 0)); onClicked: root.saveMarkup() }
                 ToolAction { id: pageActionsButton; text: "Page ▾"; visible: root.isPdf; onClicked: pageMenu.popup(pageActionsButton, Qt.point(0, pageActionsButton.height)) }
                 ToolAction { text: "Export"; enabled: Boolean(root.sourcePath && viewerLoader.item && (!root.isPdf || viewerLoader.item.pageCount > 0)); onClicked: root.openExportDialog() }
+                ToolAction { id: documentToolsButton; text: "More ▾"; enabled: Boolean(root.sourcePath); onClicked: documentToolsMenu.popup(documentToolsButton, Qt.point(0, documentToolsButton.height)) }
+                Menu {
+                    id: documentToolsMenu
+                    MenuItem { text: "Fill PDF forms…"; enabled: root.isPdf; onTriggered: formsDialog.open() }
+                    MenuItem { text: root.activeTool === "signature" ? "Stop signing" : "Draw signature"; checkable: true; checked: root.activeTool === "signature"; onTriggered: root.activeTool = root.activeTool === "signature" ? "select" : "signature" }
+                    MenuSeparator { }
+                    MenuItem { text: "Print…"; enabled: Boolean(root.sourcePath && viewerLoader.item); onTriggered: root.openPrintDialog() }
+                }
 
                 Item { Layout.fillWidth: true }
 
@@ -496,7 +607,7 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     text: root.sourcePath && viewerLoader.item
-                        ? viewerLoader.item.documentStatus + (root.isPdf ? " · PDF" : root.activeTool === "crop" ? " · Drag to select crop" : " · Image")
+                        ? viewerLoader.item.documentStatus + (root.activeTool === "signature" ? " · Draw signature" : root.isPdf ? " · PDF" : root.activeTool === "crop" ? " · Drag to select crop" : " · Image")
                         : "PDF · PNG · JPEG · SVG · WebP"
                     color: Theme.Tokens.textSecondary
                     font.pixelSize: 10
@@ -525,6 +636,214 @@ ApplicationWindow {
             spacing: 10
             Text { text: "The text stays editable in the Preview markup sidecar."; color: Theme.Tokens.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             TextField { id: textInput; Layout.fillWidth: true; placeholderText: "Type a note"; onAccepted: textDialog.accept() }
+        }
+    }
+
+    Dialog {
+        id: formsDialog
+        title: "Fill PDF forms"
+        modal: true
+        width: Math.min(640, Math.max(460, root.width - 32))
+        height: Math.min(620, Math.max(220, root.height - 32))
+        standardButtons: Dialog.Close
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 620
+            implicitHeight: 480
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: root.formsStatus || "Loading form fields…"
+                color: Theme.Tokens.textSecondary
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+
+            ListView {
+                id: formFieldsList
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 7
+                model: root.formFields
+
+                delegate: Rectangle {
+                    id: formFieldRow
+                    required property var modelData
+                    property var field: modelData
+                    width: formFieldsList.width
+                    height: fieldContents.implicitHeight + 18
+                    radius: Theme.Tokens.radiusSmall
+                    color: Theme.Tokens.surfaceRaised
+                    border.width: 1
+                    border.color: Theme.Tokens.separator
+
+                    ColumnLayout {
+                        id: fieldContents
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        spacing: 5
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: formFieldRow.field.label + (formFieldRow.field.required ? " *" : "")
+                                + (formFieldRow.field.pages && formFieldRow.field.pages.length ? " · page " + formFieldRow.field.pages.join(", ") : "")
+                            color: Theme.Tokens.textPrimary
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            elide: Text.ElideRight
+                        }
+
+                        TextField {
+                            visible: formFieldRow.field.type === "text"
+                            Layout.fillWidth: true
+                            placeholderText: formFieldRow.field.name
+                            text: String(root.formValue(formFieldRow.field) || "")
+                            readOnly: formFieldRow.field.read_only
+                            onEditingFinished: root.setFormValue(formFieldRow.field, text)
+                        }
+
+                        ComboBox {
+                            visible: formFieldRow.field.type === "choice" || formFieldRow.field.type === "radio"
+                            Layout.fillWidth: true
+                            model: formFieldRow.field.options || []
+                            textRole: "label"
+                            enabled: !formFieldRow.field.read_only
+                            currentIndex: {
+                                const selected = root.formValue(formFieldRow.field)
+                                const values = formFieldRow.field.options || []
+                                for (let index = 0; index < values.length; index++) {
+                                    if (values[index].value === selected) return index
+                                }
+                                return -1
+                            }
+                            onActivated: function(index) {
+                                const values = formFieldRow.field.options || []
+                                if (index >= 0 && index < values.length) root.setFormValue(formFieldRow.field, values[index].value)
+                            }
+                        }
+
+                        CheckBox {
+                            visible: formFieldRow.field.type === "checkbox"
+                            text: "Checked"
+                            enabled: !formFieldRow.field.read_only
+                            checked: {
+                                const selected = root.formValue(formFieldRow.field)
+                                return selected !== "" && selected !== "/Off"
+                            }
+                            onToggled: {
+                                const choices = formFieldRow.field.options || []
+                                root.setFormValue(formFieldRow.field, checked ? choices.length ? choices[0].value : "/Yes" : "/Off")
+                            }
+                        }
+
+                        ColumnLayout {
+                            visible: formFieldRow.field.type === "multi_choice"
+                            Layout.fillWidth: true
+                            Repeater {
+                                model: formFieldRow.field.options || []
+                                delegate: CheckBox {
+                                    required property var modelData
+                                    text: modelData.label
+                                    enabled: !formFieldRow.field.read_only
+                                    checked: {
+                                        const selected = root.formValue(formFieldRow.field)
+                                        return Array.isArray(selected) && selected.indexOf(modelData.value) >= 0
+                                    }
+                                    onToggled: {
+                                        const current = root.formValue(formFieldRow.field)
+                                        const selected = Array.isArray(current) ? current.slice() : []
+                                        const position = selected.indexOf(modelData.value)
+                                        if (checked && position < 0) selected.push(modelData.value)
+                                        else if (!checked && position >= 0) selected.splice(position, 1)
+                                        root.setFormValue(formFieldRow.field, selected)
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            visible: formFieldRow.field.type === "signature"
+                            Layout.fillWidth: true
+                            text: "Use More → Draw signature to place a visible signature mark on the page."
+                            color: Theme.Tokens.textSecondary
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            visible: formFieldRow.field.type === "unsupported"
+                            Layout.fillWidth: true
+                            text: "This field type cannot be edited in Preview yet."
+                            color: Theme.Tokens.textSecondary
+                            font.pixelSize: 11
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: printDialog
+        title: "Print document"
+        modal: true
+        standardButtons: Dialog.Cancel
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 440
+            spacing: 11
+
+            Text {
+                Layout.fillWidth: true
+                text: "Preview sends a temporary copy with markup and PDF form values applied. Your source file stays untouched."
+                color: Theme.Tokens.textSecondary
+                wrapMode: Text.WordWrap
+            }
+
+            Text { text: "Printer"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+            ComboBox {
+                id: printerInput
+                Layout.fillWidth: true
+                model: ["System default"].concat(root.printerNames)
+                currentIndex: root.defaultPrinter ? Math.max(0, root.printerNames.indexOf(root.defaultPrinter) + 1) : 0
+            }
+
+            GridLayout {
+                Layout.fillWidth: true
+                columns: 2
+                columnSpacing: 12
+                rowSpacing: 8
+                Text { text: "Copies"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+                SpinBox { id: copyInput; from: 1; to: 99; value: 1; editable: true; Layout.fillWidth: true }
+                Text { text: "Pages"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+                TextField { id: pageRangeInput; Layout.fillWidth: true; placeholderText: "All pages, or 1-3,5" }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: root.printerStatus || "Page ranges use the order of the prepared document."
+                color: root.printerStatus.indexOf("Could not") === 0 || root.printerStatus.indexOf("CUPS") >= 0 ? Theme.Tokens.warning : Theme.Tokens.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { text: "Print"; highlighted: true; onClicked: root.submitPrint() }
+            }
         }
     }
 
@@ -617,6 +936,7 @@ ApplicationWindow {
             for (const page of Object.keys(value.page_rotations || {})) {
                 if (value.page_rotations[page] !== 0) return true
             }
+            if (Object.keys(value.form_values || {}).length > 0) return true
         }
         return false
     }

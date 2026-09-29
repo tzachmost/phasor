@@ -50,7 +50,7 @@ Item {
         context.fillStyle = color
         context.lineWidth = Math.max(1.5, (mark.width || strokeScale) * unit)
 
-        if (mark.type === "stroke" && Array.isArray(mark.points) && mark.points.length > 0) {
+        if ((mark.type === "stroke" || mark.type === "signature") && Array.isArray(mark.points) && mark.points.length > 0) {
             context.beginPath()
             context.moveTo(mark.points[0][0] * width, mark.points[0][1] * height)
             for (let index = 1; index < mark.points.length; index++) {
@@ -113,7 +113,7 @@ Item {
                 }
             } else {
                 root.activeAnnotation = {
-                    type: "stroke",
+                    type: root.activeTool === "signature" ? "signature" : "stroke",
                     width: root.strokeScale,
                     color: root.inkColor.toString(),
                     points: [[x, y]]
@@ -126,9 +126,9 @@ Item {
             if (!pressed || !root.activeAnnotation) return
             const x = root.normalized(mouse.x, root.width)
             const y = root.normalized(mouse.y, root.height)
-            if (root.activeAnnotation.type === "stroke") {
+            if (root.activeAnnotation.type === "stroke" || root.activeAnnotation.type === "signature") {
                 const points = root.activeAnnotation.points.slice()
-                points.push([x, y])
+                if (points.length < 6000) points.push([x, y])
                 root.activeAnnotation = Object.assign({}, root.activeAnnotation, { points: points })
             } else {
                 root.activeAnnotation = Object.assign({}, root.activeAnnotation, { x2: x, y2: y })

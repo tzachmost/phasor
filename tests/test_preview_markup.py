@@ -62,6 +62,38 @@ class PreviewMarkupTests(unittest.TestCase):
 
         self.assertEqual(load_markup(str(self.document)), payload)
 
+    def test_pdf_form_values_round_trip_through_sidecar(self) -> None:
+        payload = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {},
+            "form_values": {"full_name": "Ada Lovelace", "accept_terms": "/Yes", "foods": ["tea", "cake"]},
+        }
+
+        save_markup(str(self.document), json.dumps(payload))
+
+        self.assertEqual(load_markup(str(self.document)), payload)
+
+    def test_signature_strokes_are_preserved_as_markup(self) -> None:
+        payload = {
+            "version": 1,
+            "kind": "image",
+            "annotations": [
+                {"type": "signature", "points": [[0.1, 0.2], [0.4, 0.5]], "color": "#111111", "width": 0.01}
+            ],
+        }
+
+        save_markup(str(self.document), json.dumps(payload))
+
+        self.assertEqual(load_markup(str(self.document)), payload)
+
+    def test_pdf_form_values_reject_bad_names_and_values(self) -> None:
+        base = {"version": 1, "kind": "pdf", "pages": {}}
+        with self.assertRaisesRegex(ValueError, "field map"):
+            validate_payload({**base, "form_values": []})
+        with self.assertRaisesRegex(ValueError, "strings"):
+            validate_payload({**base, "form_values": {"name": True}})
+
     def test_pdf_page_operations_reject_duplicates_and_invalid_rotations(self) -> None:
         with self.assertRaisesRegex(ValueError, "unique"):
             validate_payload({

@@ -44,13 +44,13 @@ def _validate_annotation(value: Any) -> dict[str, Any]:
         raise ValueError("Each markup item must be an object")
     kind = value.get("type")
     color = value.get("color", "#8bd5ca")
-    if kind not in {"stroke", "rectangle", "highlight", "text"}:
+    if kind not in {"stroke", "signature", "rectangle", "highlight", "text"}:
         raise ValueError("Unsupported markup type")
     if not isinstance(color, str) or not COLOR_RE.fullmatch(color):
         raise ValueError("Markup color must be a hex color")
 
     result: dict[str, Any] = {"type": kind, "color": color}
-    if kind == "stroke":
+    if kind in {"stroke", "signature"}:
         points = value.get("points")
         if not isinstance(points, list) or not points or len(points) > MAX_POINTS_PER_STROKE:
             raise ValueError("A pen stroke must contain between one and 6000 points")
@@ -141,6 +141,25 @@ def validate_payload(value: Any) -> dict[str, Any]:
                     raise ValueError("PDF page rotations must be 0, 90, 180, or 270 degrees")
                 rotations[str(int(page))] = rotation
             result["page_rotations"] = rotations
+        form_values = value.get("form_values")
+        if form_values is not None:
+            if not isinstance(form_values, dict) or len(form_values) > MAX_ANNOTATIONS:
+                raise ValueError("PDF form values must be a field map")
+            normalized_values: dict[str, str | list[str]] = {}
+            for name, field_value in form_values.items():
+                if not isinstance(name, str) or not name or len(name) > 512:
+                    raise ValueError("PDF form field names must be non-empty strings up to 512 characters")
+                if isinstance(field_value, str) and len(field_value) <= 4096:
+                    normalized_values[name] = field_value
+                elif (
+                    isinstance(field_value, list)
+                    and len(field_value) <= 256
+                    and all(isinstance(item, str) and len(item) <= 4096 for item in field_value)
+                ):
+                    normalized_values[name] = field_value
+                else:
+                    raise ValueError("PDF form values must be strings or lists of strings up to 4096 characters")
+            result["form_values"] = normalized_values
         return result
     raise ValueError("Markup kind must be image or pdf")
 

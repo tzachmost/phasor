@@ -29,6 +29,7 @@ Recommends:     NetworkManager
 Recommends:     bluez
 Recommends:     polkit-gnome
 Suggests:       qt6-qtpdf
+Suggests:       cups-client
 
 %description
 Phasor is a portable MangoWM desktop shell with a Quickshell UI, app and file

@@ -8,6 +8,7 @@ license=('MIT')
 depends=('mangowm-git' 'quickshell' 'python' 'python-pillow' 'python-pypdf' 'python-reportlab' 'libwebp' 'ttf-dejavu' 'xdg-utils' 'wl-clipboard' 'glib2' 'swaybg' 'cliphist' 'swaync' 'flameshot')
 optdepends=(
   'qt6-webengine: PDF viewing in Phasor Preview'
+  'cups: printing from Phasor Preview'
   'playerctl: MPRIS controls'
   'nautilus: reveal files in the default file manager'
   'brightnessctl: brightness controls'
