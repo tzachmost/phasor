@@ -893,12 +893,27 @@ ApplicationWindow {
                         }
 
                         TextField {
-                            visible: formFieldRow.field.type === "text"
+                            visible: formFieldRow.field.type === "text" && !formFieldRow.field.multiline
                             Layout.fillWidth: true
                             placeholderText: formFieldRow.field.name
                             text: String(root.formValue(formFieldRow.field) || "")
                             readOnly: formFieldRow.field.read_only
                             onEditingFinished: root.setFormValue(formFieldRow.field, text)
+                        }
+
+                        ScrollView {
+                            visible: formFieldRow.field.type === "text" && formFieldRow.field.multiline
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 104
+                            clip: true
+
+                            TextArea {
+                                placeholderText: formFieldRow.field.name
+                                text: String(root.formValue(formFieldRow.field) || "")
+                                readOnly: formFieldRow.field.read_only
+                                wrapMode: TextEdit.Wrap
+                                onEditingFinished: root.setFormValue(formFieldRow.field, text)
+                            }
                         }
 
                         ComboBox {

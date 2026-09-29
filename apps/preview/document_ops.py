@@ -502,6 +502,7 @@ def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
                 "value": value,
                 "required": bool(flags & (1 << 1)),
                 "read_only": bool(flags & 1),
+                "multiline": field_type == "/Tx" and bool(flags & (1 << 12)),
                 "options": options,
                 "pages": sorted(pages_by_field.get(name, set())),
             })

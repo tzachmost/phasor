@@ -52,6 +52,16 @@ class PreviewExportTests(unittest.TestCase):
             value="Phasor Office",
             fieldFlags="readOnly",
         )
+        page_canvas.acroForm.textfield(
+            name="notes",
+            tooltip="Notes",
+            x=40,
+            y=15,
+            width=130,
+            height=30,
+            value="Initial note",
+            fieldFlags="multiline",
+        )
         page_canvas.acroForm.checkbox(
             name="accept_terms", tooltip="Accept terms", x=40, y=100, size=14, checked=False
         )
@@ -370,7 +380,9 @@ class PreviewExportTests(unittest.TestCase):
         form_info = inspect_pdf_forms(str(source))
         fields = {field["name"]: field for field in form_info["fields"]}
         self.assertEqual(fields["full_name"]["type"], "text")
+        self.assertFalse(fields["full_name"]["multiline"])
         self.assertTrue(fields["issued_by"]["read_only"])
+        self.assertTrue(fields["notes"]["multiline"])
         self.assertEqual(fields["accept_terms"]["type"], "checkbox")
         self.assertEqual(fields["country"]["type"], "choice")
         self.assertEqual(fields["favorite_drinks"]["type"], "multi_choice")
@@ -390,6 +402,7 @@ class PreviewExportTests(unittest.TestCase):
                         "accept_terms": "/Yes",
                         "country": "Canada",
                         "favorite_drinks": ["Coffee", "Water"],
+                        "notes": "First line\nSecond line",
                     },
                 }
             },
@@ -400,6 +413,7 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(str(values["accept_terms"]["/V"]), "/Yes")
         self.assertEqual(values["country"]["/V"], "Canada")
         self.assertEqual(values["favorite_drinks"]["/V"], ["Coffee", "Water"])
+        self.assertEqual(values["notes"]["/V"], "First line\nSecond line")
         output_page = PdfReader(output).pages[0]
         widgets = {
             str(reference.get_object().get("/T")): reference.get_object()
