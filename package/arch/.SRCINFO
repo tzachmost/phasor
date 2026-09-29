@@ -25,6 +25,6 @@ pkgbase = phasor-shell
 	conflicts = phasor-shell-git
 	replaces = phasor-shell-git
 	source = phasor-1.0.0.tar.gz::https://github.com/tzachmost/phasor/releases/download/v1.0.0/phasor-1.0.0.tar.gz
-	sha256sums = 62db2076c14c4315dbd086f3af011cd36e35170e4080ae074b846fecacdd28c2
+	sha256sums = 7469883bf23e838e8d7072a9299f458a92f63ece805c4fa2cf5134ae69b2c0a8
 
 pkgname = phasor-shell

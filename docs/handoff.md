@@ -20,7 +20,7 @@ Arch/CachyOS, Fedora, Universal Blue/OSTree, and NixOS install, update, diagnost
 
 ## Next work
 
-1. Review and commit the prepared 1.0.0 source, publish the `v1.0.0` GitHub release with the source archive and RPM assets, and publish the Arch recipe metadata. This checkout still has local modified and untracked work; the environment has no authenticated GitHub session.
+1. Push the prepared 1.0.0 source commit, publish the `v1.0.0` GitHub release assets, and submit the stable Arch recipe metadata to the AUR. GitHub reports no authenticated CLI/browser session, and the AUR host rejects the available SSH credentials.
 2. Start the Preview application only after the 1.0 release checklist is complete.
 
 ## Development notes
