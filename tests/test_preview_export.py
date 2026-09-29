@@ -849,6 +849,103 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(int(notes[0].get("/F")), 4)
         self.assertGreater(float(notes[0]["/Rect"][2]), float(notes[0]["/Rect"][0]))
 
+    def test_pdf_redaction_removes_page_objects_and_document_secrets_from_export_copy(self):
+        from pypdf import PdfWriter
+
+        source = self.root / "redaction-source.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(240, 160))
+        page_canvas.drawString(24, 72, "SENSITIVE-123-456")
+        page_canvas.showPage()
+        page_canvas.drawString(24, 112, "PUBLIC PAGE STAYS SEARCHABLE")
+        page_canvas.save()
+        source_reader = PdfReader(io.BytesIO(buffer.getvalue()))
+        source_writer = PdfWriter()
+        source_writer.append(source_reader)
+        source_writer.add_metadata({"/Title": "PRIVATE SECRET METADATA"})
+        source_writer.add_attachment("secret.txt", b"PRIVATE SECRET ATTACHMENT")
+        with source.open("wb") as stream:
+            source_writer.write(stream)
+        original = source.read_bytes()
+        output = self.root / "redacted-copy.pdf"
+        markup = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {
+                "0": [{"type": "redaction", "x1": 0.06, "y1": 0.42, "x2": 0.88, "y2": 0.64}]
+            },
+        }
+
+        export_pdf(str(source), str(output), {"markup": markup})
+
+        redacted = PdfReader(output)
+        self.assertEqual(len(redacted.pages), 2)
+        self.assertEqual(redacted.pages[0].extract_text() or "", "")
+        self.assertIn("PUBLIC PAGE STAYS SEARCHABLE", redacted.pages[1].extract_text())
+        self.assertEqual(redacted.attachments, {})
+        self.assertIsNone(redacted.metadata.title)
+        self.assertNotIn(b"SENSITIVE-123-456", output.read_bytes())
+        self.assertNotIn(b"PRIVATE SECRET", output.read_bytes())
+        self.assertEqual(source.read_bytes(), original)
+
+        page_image = redacted.pages[0].images[0].image.convert("RGB")
+        self.assertEqual(page_image.getpixel((page_image.width // 2, page_image.height // 2)), (0, 0, 0))
+
+        rotated_output = self.root / "redacted-rotated.pdf"
+        rotated_markup = {**markup, "page_rotations": {"0": 90}}
+        export_pdf(str(source), str(rotated_output), {"markup": rotated_markup})
+        rotated_page = PdfReader(rotated_output).pages[0]
+        self.assertEqual((float(rotated_page.mediabox.width), float(rotated_page.mediabox.height)), (160.0, 240.0))
+        self.assertEqual(rotated_page.rotation, 0)
+        baseline_output = self.root / "baseline-rotated.pdf"
+        export_pdf(
+            str(source),
+            str(baseline_output),
+            {"markup": {"version": 1, "kind": "pdf", "pages": {}, "page_rotations": {"0": 90}}},
+        )
+        import subprocess
+        from PIL import ImageChops
+
+        baseline_prefix = self.root / "baseline-rotated-page"
+        subprocess.run(
+            [
+                "pdftoppm",
+                "-f",
+                "1",
+                "-l",
+                "1",
+                "-r",
+                "300",
+                "-png",
+                "-singlefile",
+                "-cropbox",
+                str(baseline_output),
+                str(baseline_prefix),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        with Image.open(baseline_prefix.with_suffix(".png")) as baseline_image:
+            baseline_gray = baseline_image.convert("L")
+        rotated_image = rotated_page.images[0].image.convert("L")
+        self.assertEqual(baseline_gray.size, rotated_image.size)
+        source_text_mask = baseline_gray.point(lambda value: 255 if value < 230 else 0)
+        self.assertIsNone(ImageChops.multiply(source_text_mask, rotated_image).getbbox())
+
+        signed_source = self.make_signature_fixture("redaction-signed.pdf")
+        with self.assertRaisesRegex(ValueError, "Cannot redact a digitally signed PDF"):
+            export_pdf(
+                str(signed_source),
+                str(self.root / "redacted-signed.pdf"),
+                {"markup": markup},
+            )
+
+        unavailable_output = self.root / "redacted-without-poppler.pdf"
+        with patch("apps.preview.document_ops.shutil.which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "Permanent PDF redaction needs Poppler"):
+                export_pdf(str(source), str(unavailable_output), {"markup": markup})
+        self.assertFalse(unavailable_output.exists())
+
     def test_pdf_export_can_exclude_pages(self):
         source = self.root / "source.pdf"
         buffer = io.BytesIO()

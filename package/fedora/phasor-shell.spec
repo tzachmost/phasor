@@ -14,6 +14,7 @@ Requires:       python3-pillow
 Requires:       python3-pypdf >= 5.7.0
 Requires:       python3-reportlab
 Requires:       python3-cryptography
+Requires:       poppler-utils
 Requires:       dejavu-sans-fonts
 Requires:       libwebp
 Requires:       xdg-utils

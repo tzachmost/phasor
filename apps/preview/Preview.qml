@@ -1572,6 +1572,13 @@ ApplicationWindow {
                         text: "Clear lasso selection"
                     }
                     MenuSeparator { visible: !root.isPdf }
+                    MenuItem {
+                        text: root.activeTool === "redaction" ? "Stop redacting" : "Redact area (removed on export)"
+                        checkable: true
+                        checked: root.activeTool === "redaction"
+                        enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0)
+                        onTriggered: root.activeTool === "redaction" ? root.activeTool = "select" : root.addTextAnnotationTool("redaction")
+                    }
                     MenuItem { text: "Fill PDF forms…"; enabled: root.isPdf; onTriggered: formsDialog.open() }
                     MenuItem { text: root.activeTool === "signature" ? "Stop signing" : "Draw signature"; checkable: true; checked: root.activeTool === "signature"; onTriggered: root.activeTool = root.activeTool === "signature" ? "select" : "signature" }
                     MenuItem { text: "Sign with certificate…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0 && !signProcess.running); onTriggered: root.beginCertificateSigning() }

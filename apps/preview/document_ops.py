@@ -27,6 +27,9 @@ except ImportError:
 
 MAX_IMAGE_PIXELS = 100_000_000
 MAX_IMAGE_DIMENSION = 32_768
+REDACTION_DPI = 300
+MAX_REDACTION_PAGE_PIXELS = 40_000_000
+MAX_REDACTION_TOTAL_PIXELS = 200_000_000
 SUPPORTED_IMAGE_FORMATS = {
     ".bmp": "BMP",
     ".jpeg": "JPEG",
@@ -164,7 +167,7 @@ def _draw_image_markup(image, annotations: list[dict[str, Any]]) -> None:
                 draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=rgba)
             else:
                 draw.line(points, fill=rgba, width=line_width, joint="curve")
-        elif mark["type"] in {"rectangle", "highlight"}:
+        elif mark["type"] in {"rectangle", "highlight", "redaction"}:
             left = min(mark["x1"], mark["x2"]) * width
             top = min(mark["y1"], mark["y2"]) * height
             right = max(mark["x1"], mark["x2"]) * width
@@ -461,7 +464,7 @@ def _draw_pdf_markup(
                     path.lineTo(*point)
                 canvas.drawPath(path, stroke=1, fill=0)
             canvas.restoreState()
-        elif mark["type"] in {"rectangle", "highlight"}:
+        elif mark["type"] in {"rectangle", "highlight", "redaction"}:
             left = origin_x + min(mark["x1"], mark["x2"]) * width
             bottom = origin_y + height - max(mark["y1"], mark["y2"]) * height
             rect_width = abs(mark["x2"] - mark["x1"]) * width
@@ -471,7 +474,10 @@ def _draw_pdf_markup(
             canvas.setFillColorRGB(red, green, blue)
             canvas.setLineWidth(line_width)
             canvas.setStrokeAlpha(alpha)
-            if mark["type"] == "highlight":
+            if mark["type"] == "redaction":
+                canvas.setFillAlpha(1)
+                canvas.rect(left, bottom, rect_width, rect_height, stroke=0, fill=1)
+            elif mark["type"] == "highlight":
                 canvas.setFillAlpha(alpha * 0.28)
                 canvas.rect(left, bottom, rect_width, rect_height, stroke=0, fill=1)
             else:
@@ -596,6 +602,134 @@ def _add_pdf_text_notes(writer, page_index: int, page, annotations: list[dict[st
             "/Open": False,
             "/F": 4,
         })
+
+
+def _write_redacted_pdf_copy(
+    prepared_path: Path,
+    output: Path,
+    redacted_pages: set[int],
+    *,
+    protect_password: str,
+    reduce_file_size: bool,
+) -> None:
+    """Rasterize marked pages so their original PDF objects cannot be recovered."""
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.lib.utils import ImageReader
+
+    pdftoppm = shutil.which("pdftoppm")
+    if not pdftoppm:
+        raise ValueError(
+            "Permanent PDF redaction needs Poppler's pdftoppm. Install poppler on Arch or poppler-utils on Fedora."
+        )
+
+    Image, _, _, _ = _optional_image_stack()
+    source_reader = PdfReader(str(prepared_path), strict=False)
+    writer = PdfWriter()
+    imported_image_pages = []
+    total_pixels = 0
+    with tempfile.TemporaryDirectory(prefix="phasor-preview-redact-") as temporary:
+        temporary_root = Path(temporary)
+        for page_index, page in enumerate(source_reader.pages):
+            if page_index not in redacted_pages:
+                writer.add_page(page)
+                continue
+
+            crop_box = page.cropbox
+            user_unit = float(page.get("/UserUnit", 1))
+            page_width = float(crop_box.width) * user_unit
+            page_height = float(crop_box.height) * user_unit
+            if (
+                not math.isfinite(page_width)
+                or not math.isfinite(page_height)
+                or page_width <= 0
+                or page_height <= 0
+            ):
+                raise ValueError(f"Page {page_index + 1} has invalid dimensions for redaction")
+            if int(page.rotation or 0) % 180:
+                page_width, page_height = page_height, page_width
+
+            estimated_width = max(1, math.ceil(page_width * REDACTION_DPI / 72))
+            estimated_height = max(1, math.ceil(page_height * REDACTION_DPI / 72))
+            estimated_pixels = estimated_width * estimated_height
+            if estimated_pixels > MAX_REDACTION_PAGE_PIXELS:
+                raise ValueError(f"Page {page_index + 1} is too large to redact at {REDACTION_DPI} DPI")
+            total_pixels += estimated_pixels
+            if total_pixels > MAX_REDACTION_TOTAL_PIXELS:
+                raise ValueError(
+                    "The redacted pages exceed Preview's 200-megapixel limit; export fewer pages at a time"
+                )
+
+            image_prefix = temporary_root / f"redacted-page-{page_index + 1:05d}"
+            command = [
+                pdftoppm,
+                "-f",
+                str(page_index + 1),
+                "-l",
+                str(page_index + 1),
+                "-r",
+                str(REDACTION_DPI),
+                "-png",
+                "-singlefile",
+                "-cropbox",
+                str(prepared_path),
+                str(image_prefix),
+            ]
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+            except subprocess.TimeoutExpired as error:
+                raise ValueError(f"Rendering page {page_index + 1} for redaction timed out") from error
+            except OSError as error:
+                raise ValueError(f"Could not start Poppler for page {page_index + 1}: {error}") from error
+            if result.returncode != 0:
+                message = result.stderr.strip() or result.stdout.strip() or "Poppler could not render the page"
+                raise ValueError(f"Could not render page {page_index + 1} for redaction: {message[:500]}")
+
+            image_path = image_prefix.with_suffix(".png")
+            if not image_path.is_file():
+                raise ValueError(f"Poppler did not create a redaction image for page {page_index + 1}")
+            try:
+                with Image.open(image_path) as rendered_page:
+                    rendered_pixels = rendered_page.width * rendered_page.height
+                    if rendered_pixels > MAX_REDACTION_PAGE_PIXELS:
+                        raise ValueError(
+                            f"Page {page_index + 1} is too large to redact at {REDACTION_DPI} DPI"
+                        )
+                    total_pixels += rendered_pixels - estimated_pixels
+                    if total_pixels > MAX_REDACTION_TOTAL_PIXELS:
+                        raise ValueError(
+                            "The redacted pages exceed Preview's 200-megapixel limit; export fewer pages at a time"
+                        )
+                    rendered_page.load()
+                    rendered_rgb = rendered_page.convert("RGB")
+            except (OSError, Image.DecompressionBombError) as error:
+                raise ValueError(f"Could not read the redaction image for page {page_index + 1}: {error}") from error
+
+            page_buffer = io.BytesIO()
+            report_canvas = _reportlab_stack()[2].Canvas(
+                page_buffer, pagesize=(page_width, page_height), pageCompression=1
+            )
+            report_canvas.drawImage(ImageReader(rendered_rgb), 0, 0, width=page_width, height=page_height)
+            report_canvas.showPage()
+            report_canvas.save()
+            page_buffer.seek(0)
+            image_reader = PdfReader(page_buffer, strict=False)
+            writer.add_page(image_reader.pages[0])
+            imported_image_pages.append((page_buffer, image_reader))
+            rendered_rgb.close()
+
+    if reduce_file_size:
+        for page in writer.pages:
+            page.compress_content_streams()
+        compress_objects = getattr(writer, "compress_identical_objects", None)
+        if compress_objects:
+            compress_objects()
+    if protect_password:
+        writer.encrypt(protect_password, algorithm="AES-256")
+
+    def write(stream) -> None:
+        writer.write(stream)
+
+    _atomic_save(output, write)
 
 
 def _field_name(annotation: Any) -> str:
@@ -1055,12 +1189,25 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
         page_order = _validated_pdf_order(markup.get("page_order"), source_page_count)
         rotations = markup.get("page_rotations", {})
         form_values = _validated_pdf_form_values(reader, markup.get("form_values", {}))
+        redacted_source_pages = {
+            source_index
+            for source_index, annotations in markup["pages"].items()
+            if any(annotation["type"] == "redaction" for annotation in annotations)
+        }
+        redacted_source_pages = {int(source_index) for source_index in redacted_source_pages}
+        source_to_output = {source_index: output_index for output_index, source_index in enumerate(page_order)}
+        redacted_output_pages = {
+            output_index
+            for source_index, output_index in source_to_output.items()
+            if source_index in redacted_source_pages
+        }
+        if redacted_output_pages and _pdf_has_signatures(reader):
+            raise ValueError("Cannot redact a digitally signed PDF because redaction invalidates its signature")
         writer = PdfWriter()
         writer.append(reader, pages=page_order)
         if form_values:
             writer.update_page_form_field_values(None, form_values, auto_regenerate=False)
 
-        source_to_output = {source_index: output_index for output_index, source_index in enumerate(page_order)}
         for source_index, output_index in source_to_output.items():
             page = writer.pages[output_index]
             if page.rotation:
@@ -1073,19 +1220,32 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
             if rotation:
                 page.rotate(rotation)
 
-        if reduce_file_size:
-            for page in writer.pages:
-                page.compress_content_streams()
-            compress_objects = getattr(writer, "compress_identical_objects", None)
-            if compress_objects:
-                compress_objects()
-        if protect_password:
-            writer.encrypt(protect_password, algorithm="AES-256")
+        if redacted_output_pages:
+            with tempfile.TemporaryDirectory(prefix="phasor-preview-redaction-source-") as temporary:
+                prepared_path = Path(temporary) / "prepared.pdf"
+                with prepared_path.open("wb") as prepared_stream:
+                    writer.write(prepared_stream)
+                _write_redacted_pdf_copy(
+                    prepared_path,
+                    output,
+                    redacted_output_pages,
+                    protect_password=protect_password,
+                    reduce_file_size=reduce_file_size,
+                )
+        else:
+            if reduce_file_size:
+                for page in writer.pages:
+                    page.compress_content_streams()
+                compress_objects = getattr(writer, "compress_identical_objects", None)
+                if compress_objects:
+                    compress_objects()
+            if protect_password:
+                writer.encrypt(protect_password, algorithm="AES-256")
 
-        def write(stream) -> None:
-            writer.write(stream)
+            def write(stream) -> None:
+                writer.write(stream)
 
-        _atomic_save(output, write)
+            _atomic_save(output, write)
     except ValueError:
         raise
     except Exception as error:

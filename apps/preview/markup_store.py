@@ -43,14 +43,16 @@ def _validate_annotation(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("Each markup item must be an object")
     kind = value.get("type")
-    color = value.get("color", "#8bd5ca")
+    color = value.get("color", "#000000" if kind == "redaction" else "#8bd5ca")
     if kind not in {
         "stroke", "signature", "rectangle", "highlight", "text",
-        "text_highlight", "underline", "strike", "note",
+        "text_highlight", "underline", "strike", "note", "redaction",
     }:
         raise ValueError("Unsupported markup type")
     if not isinstance(color, str) or not COLOR_RE.fullmatch(color):
         raise ValueError("Markup color must be a hex color")
+    if kind == "redaction":
+        color = "#000000"
 
     result: dict[str, Any] = {"type": kind, "color": color}
     if kind in {"stroke", "signature"}:
@@ -64,12 +66,18 @@ def _validate_annotation(value: Any) -> dict[str, Any]:
             normalized_points.append([_coordinate(point[0]), _coordinate(point[1])])
         result["points"] = normalized_points
         result["width"] = _width(value.get("width", 0.006))
-    elif kind in {"rectangle", "highlight"}:
+    elif kind in {"rectangle", "highlight", "redaction"}:
+        x1 = _coordinate(value.get("x1"))
+        y1 = _coordinate(value.get("y1"))
+        x2 = _coordinate(value.get("x2"))
+        y2 = _coordinate(value.get("y2"))
+        if kind == "redaction" and (x1 == x2 or y1 == y2):
+            raise ValueError("A redaction area must have a positive width and height")
         result.update({
-            "x1": _coordinate(value.get("x1")),
-            "y1": _coordinate(value.get("y1")),
-            "x2": _coordinate(value.get("x2")),
-            "y2": _coordinate(value.get("y2")),
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
             "width": _width(value.get("width", 0.006)),
         })
     elif kind == "text":
@@ -124,7 +132,10 @@ def validate_payload(value: Any) -> dict[str, Any]:
         if not isinstance(annotations, list) or len(annotations) > MAX_ANNOTATIONS:
             raise ValueError("Image markup has too many annotations")
         validated = [_validate_annotation(item) for item in annotations]
-        if any(item["type"] in {"text_highlight", "underline", "strike", "note"} for item in validated):
+        if any(
+            item["type"] in {"text_highlight", "underline", "strike", "note", "redaction"}
+            for item in validated
+        ):
             raise ValueError("Text-anchored annotations are supported only for PDF markup")
         return {"version": 1, "kind": "image", "annotations": validated}
     if kind == "pdf":

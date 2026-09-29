@@ -67,6 +67,29 @@ class PreviewMarkupTests(unittest.TestCase):
 
         self.assertEqual(load_markup(str(self.document)), payload)
 
+    def test_redaction_markup_saves_only_geometry_and_forces_opaque_black(self) -> None:
+        payload = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {
+                "0": [{"type": "redaction", "x1": 0.1, "y1": 0.2, "x2": 0.8, "y2": 0.3, "color": "#ffffff"}]
+            },
+        }
+
+        result = save_markup(str(self.document), json.dumps(payload))
+        saved = json.loads(Path(result["sidecar"]).read_text(encoding="utf-8"))
+        redaction = saved["pages"]["0"][0]
+
+        self.assertEqual(redaction["color"], "#000000")
+        self.assertNotIn("quote", redaction)
+        self.assertNotIn("text", redaction)
+        with self.assertRaisesRegex(ValueError, "only for PDF"):
+            validate_payload({
+                "version": 1,
+                "kind": "image",
+                "annotations": [{"type": "redaction", "x1": 0.1, "y1": 0.2, "x2": 0.8, "y2": 0.3}],
+            })
+
     def test_text_anchored_annotations_reject_empty_anchors_bad_rectangles_and_image_use(self) -> None:
         base = {"version": 1, "kind": "pdf", "pages": {"0": []}}
         with self.assertRaisesRegex(ValueError, "selected quote"):

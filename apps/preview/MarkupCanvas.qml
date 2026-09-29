@@ -75,6 +75,14 @@ Item {
             context.fillRect(left, top, rectWidth, rectHeight)
             context.strokeRect(left, top, rectWidth, rectHeight)
             context.restore()
+        } else if (mark.type === "redaction" && mark.x1 !== undefined) {
+            const left = Math.min(mark.x1, mark.x2) * width
+            const top = Math.min(mark.y1, mark.y2) * height
+            const rectWidth = Math.abs(mark.x2 - mark.x1) * width
+            const rectHeight = Math.abs(mark.y2 - mark.y1) * height
+            context.globalAlpha = 1
+            context.fillStyle = "#000000"
+            context.fillRect(left, top, rectWidth, rectHeight)
         } else if ((mark.type === "rectangle" || mark.type === "highlight") && mark.x1 !== undefined) {
             const left = Math.min(mark.x1, mark.x2) * width
             const top = Math.min(mark.y1, mark.y2) * height
@@ -143,7 +151,7 @@ Item {
                 return
             }
 
-            if (root.activeTool === "rectangle" || root.activeTool === "highlight" || root.activeTool === "signature_box") {
+            if (["rectangle", "highlight", "redaction", "signature_box"].indexOf(root.activeTool) >= 0) {
                 root.activeAnnotation = {
                     type: root.activeTool,
                     x1: x,
@@ -151,7 +159,7 @@ Item {
                     x2: x,
                     y2: y,
                     width: root.strokeScale,
-                    color: root.inkColor.toString()
+                    color: root.activeTool === "redaction" ? "#000000" : root.inkColor.toString()
                 }
             } else {
                 root.activeAnnotation = {
@@ -173,6 +181,13 @@ Item {
                 return
             }
             if (!root.activeAnnotation) return
+            if (root.activeAnnotation.type === "redaction"
+                && (Math.abs(root.activeAnnotation.x2 - root.activeAnnotation.x1) < 0.002
+                    || Math.abs(root.activeAnnotation.y2 - root.activeAnnotation.y1) < 0.002)) {
+                root.activeAnnotation = null
+                canvas.requestPaint()
+                return
+            }
             if (root.activeAnnotation.type === "stroke" || root.activeAnnotation.type === "signature") {
                 const points = root.activeAnnotation.points.slice()
                 if (points.length < 6000) points.push([x, y])

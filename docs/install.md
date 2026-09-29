@@ -4,6 +4,8 @@ Phasor installs as a separate MangoWM login session. The package installs the se
 
 The published 1.0.0 packages contain the shell. Preview is part of the 1.1.0 development branch and is installed by source checkouts and development packages.
 
+Phasor Settings includes Appearance and Shell pages plus a System page for Wi-Fi, Bluetooth, PipeWire volume, backlight brightness, and Do Not Disturb. Those controls use `nmcli`, `bluetoothctl`, `wpctl`, `brightnessctl`, and `swaync-client`; a control is shown as unavailable if its optional command or hardware is absent. The development installers include the supported tools where the distribution provides them.
+
 ## Arch Linux and CachyOS
 
 For a source checkout, the installer installs dependencies, adds development links, installs the managed session, and runs diagnostics:
@@ -37,7 +39,7 @@ phasor-doctor
 
 Once the stable recipe is available from the AUR, packages installed from there can be updated with an AUR helper such as `paru -Syu phasor-shell`. Remove it with `sudo pacman -R phasor-shell`.
 
-Preview is installed as a separate app. Open it from the application launcher or run `phasor-preview path/to/file`. PDF viewing needs the optional `qt6-webengine` package; image viewing and export work without it. The development package installs cryptography with pypdf for encrypted PDF reading and AES-256 output protection. Install `python-pyhanko` from the AUR to enable certificate-based PDF signing. Install and configure `cups` to print. Editable image/PDF markup, form values, signatures, and PDF page operations are stored beside the original as a `*.phasor-markup.json` file; PDF passwords are kept out of sidecars. See [Preview's optional background-removal](preview.md#first-milestone) and [OCR setup](preview.md#local-ocr) for those separate features.
+Preview is installed as a separate app. Open it from the application launcher or run `phasor-preview path/to/file`. PDF viewing needs the optional `qt6-webengine` package; image viewing and export work without it. The development package installs cryptography with pypdf for encrypted PDF reading and AES-256 output protection, and Poppler for permanent PDF redaction. Install `python-pyhanko` from the AUR to enable certificate-based PDF signing. Install and configure `cups` to print. Editable image/PDF markup, form values, signatures, and PDF page operations are stored beside the original as a `*.phasor-markup.json` file; PDF passwords are kept out of sidecars. See [Preview's optional background-removal](preview.md#first-milestone) and [OCR setup](preview.md#local-ocr) for those separate features.
 
 The main-branch development recipe is kept in `package/arch/PKGBUILD.git`. Build it with `makepkg -si -p PKGBUILD.git`, update it from a newer commit, and remove it with `sudo pacman -R phasor-shell-git`. The stable and development packages replace each other.
 
@@ -53,7 +55,7 @@ cd ~/Work/phasor
 
 For source updates, use the Arch/CachyOS update steps above. To build an RPM, install `rpm-build` and run `./scripts/build-rpm`. The RPM and SRPM are written under `package/fedora/RPMS/`. Install or update the exact noarch RPM from that directory with `sudo dnf install /path/to/phasor-shell.rpm`; run `phasor-doctor` after installing. Remove an RPM install with `sudo dnf remove phasor-shell`.
 
-Preview is installed as a separate app. Install `qt6-qtpdf` to enable PDF viewing; image viewing and image export work without that optional package. The RPM includes Pillow, pypdf, ReportLab, cryptography, and DejaVu Sans for export. Follow [the optional signing and background-removal setup](preview.md#first-milestone) and [optional OCR setup](preview.md#local-ocr). Install and configure `cups-client` to print.
+Preview is installed as a separate app. Install `qt6-qtpdf` to enable PDF viewing; image viewing and image export work without that optional package. The RPM includes Pillow, pypdf, ReportLab, cryptography, Poppler utilities for permanent PDF redaction, and DejaVu Sans for export. Follow [the optional signing and background-removal setup](preview.md#first-milestone) and [optional OCR setup](preview.md#local-ocr). Install and configure `cups-client` to print.
 
 ## Universal Blue and other OSTree Fedora systems
 

@@ -7,6 +7,7 @@
   findutils,
   gnugrep,
   quickshell,
+  poppler-utils,
   python3,
   dejavu_fonts,
   xdg-utils,
@@ -44,7 +45,7 @@ stdenvNoCC.mkDerivation {
     cp -R "$src/apps" "$out/share/phasor/"
 
     runtimePath="${lib.makeBinPath [
-      bash coreutils findutils gnugrep quickshell previewPython xdg-utils wl-clipboard
+      bash coreutils findutils gnugrep quickshell previewPython poppler-utils xdg-utils wl-clipboard
       glib swaybg cliphist swaynotificationcenter flameshot playerctl brightnessctl
       wireplumber networkmanager bluez polkit_gnome
     ]}"
