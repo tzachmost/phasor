@@ -59,7 +59,7 @@ The first Preview milestone is complete. Continue toward a broader document and 
 - [ ] Add single-page, continuous-scroll, and two-page reading layouts.
 - [ ] Add and move individual PDF pages, including blank pages and pages selected from another open document.
 - [ ] Add text-anchored highlighting, underline, strike-through, and note annotations.
-- [ ] Add a document information panel for PDF metadata and image dimensions, format, and metadata.
+- [x] Add a document information panel for PDF metadata and image dimensions, format, and available image metadata.
 - [ ] Add PDF password entry/protection and file-size reduction with explicit copy-based export.
 - [ ] Expand image workflows with flip, animated-image frame browsing, and background removal.
 - [ ] Exercise Preview with complex public forms, outlines, signed files, large scans, and real printer queues.

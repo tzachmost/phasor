@@ -47,6 +47,40 @@ ApplicationWindow {
     property string signingPasswordPending: ""
     property var signingOptionsPending: ({})
     property var loadedMarkup: ({})
+    property var documentInfo: ({})
+    property string infoLoadPath: ""
+    property bool infoReady: true
+    readonly property var documentInfoRows: {
+        const info = root.documentInfo || ({})
+        if (info.error) return [{ label: "Status", value: info.error }]
+        if (Object.keys(info).length === 0) return [{ label: "Status", value: "Loading document information…" }]
+
+        const rows = [
+            { label: "Name", value: info.name },
+            { label: "Location", value: info.path },
+            { label: "Type", value: info.kind === "pdf" ? "PDF document" : info.format || "Image" },
+            { label: "File size", value: root.formatBytes(info.size_bytes) },
+            { label: "Modified", value: info.modified }
+        ]
+        if (info.kind === "pdf") {
+            rows.push({ label: "Pages", value: info.page_count === undefined ? "Password protected" : info.page_count })
+            if (info.pdf_version) rows.push({ label: "PDF version", value: info.pdf_version })
+            if (info.encrypted) rows.push({ label: "Security", value: "Password protected" })
+            for (const key of ["title", "author", "subject", "keywords", "creator", "producer", "created", "modified_document"]) {
+                if (info[key]) rows.push({ label: key.replace(/_/g, " "), value: info[key] })
+            }
+        } else if (info.kind === "image") {
+            if (info.width && info.height) rows.push({ label: "Dimensions", value: info.width + " × " + info.height + " pixels" })
+            if (info.mode) rows.push({ label: "Color mode", value: info.mode })
+            if (info.metadata_error) rows.push({ label: "Details", value: info.metadata_error })
+            if (info.frames > 1) rows.push({ label: "Animation", value: info.frames + " frames" })
+            if (info.dpi) rows.push({ label: "Resolution", value: info.dpi[0] + " × " + info.dpi[1] + " dpi" })
+            if (info.camera_make) rows.push({ label: "Camera", value: info.camera_make + (info.camera_model ? " " + info.camera_model : "") })
+            if (info.captured) rows.push({ label: "Captured", value: info.captured })
+            if (info.exif_fields) rows.push({ label: "EXIF fields", value: info.exif_fields })
+        }
+        return rows.filter(function(row) { return row.value !== undefined && row.value !== null && String(row.value).length > 0 })
+    }
     property var pendingTextPosition: ({ x: 0, y: 0 })
     property string helperPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/markup_store.py"
     property string documentOpsPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/document_ops.py"
@@ -67,13 +101,31 @@ ApplicationWindow {
         return parts.length > 0 ? parts[parts.length - 1] : path
     }
 
+    function formatBytes(value) {
+        let size = Number(value)
+        if (!Number.isFinite(size) || size < 0) return "Unknown"
+        if (size < 1024) return size + " B"
+        const units = ["KB", "MB", "GB", "TB"]
+        size /= 1024
+        let index = 0
+        while (size >= 1024 && index < units.length - 1) {
+            size /= 1024
+            index++
+        }
+        return size.toFixed(size < 10 ? 1 : 0) + " " + units[index]
+    }
+
+    function openDocumentInfo() {
+        if (sourcePath) documentInfoDialog.open()
+    }
+
     function openFile(value) {
         const incoming = String(value || "")
         if (incoming.length === 0) return
         const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(incoming)
         const nextSourceUrl = isUrl ? incoming : urlFromPath(incoming)
         const nextSourcePath = pathFromUrl(nextSourceUrl)
-        if (sourcePath && (!markupReady || (root.isPdf && !formsReady))) {
+        if (sourcePath && (!markupReady || (root.isPdf && !formsReady) || !infoReady)) {
             pendingFileToOpen = nextSourcePath
             return
         }
@@ -94,6 +146,8 @@ ApplicationWindow {
         searchText = ""
         saveStatus = ""
         loadedMarkup = ({})
+        documentInfo = ({})
+        infoReady = false
         formFields = []
         formsStatus = isPdf ? "Loading form fields…" : ""
         formsReady = !isPdf
@@ -111,10 +165,12 @@ ApplicationWindow {
             formsLoadPath = sourcePath
             formsProcess.exec(["python3", documentOpsPath, "forms", sourcePath])
         }
+        infoLoadPath = sourcePath
+        infoProcess.exec(["python3", documentOpsPath, "inspect", sourcePath])
     }
 
     function continueAfterDocumentReady() {
-        if (!markupReady || (root.isPdf && !formsReady)) return
+        if (!markupReady || (root.isPdf && !formsReady) || !infoReady) return
 
         const pending = pendingFileToOpen
         pendingFileToOpen = ""
@@ -488,6 +544,24 @@ ApplicationWindow {
     }
 
     Process {
+        id: infoProcess
+        command: ["python3"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (root.infoLoadPath !== root.sourcePath) return
+                try {
+                    root.documentInfo = JSON.parse(text)
+                } catch (error) {
+                    root.documentInfo = ({ error: "Could not read document information" })
+                }
+                root.infoReady = true
+                root.continueAfterDocumentReady()
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview document info:", text) }
+    }
+
+    Process {
         id: saveProcess
         command: ["python3"]
         property string sourcePathAtStart: ""
@@ -697,6 +771,8 @@ ApplicationWindow {
                 ToolAction { id: documentToolsButton; text: "More ▾"; enabled: Boolean(root.sourcePath); onClicked: documentToolsMenu.popup(documentToolsButton, Qt.point(0, documentToolsButton.height)) }
                 Menu {
                     id: documentToolsMenu
+                    MenuItem { text: "Document info…"; onTriggered: root.openDocumentInfo() }
+                    MenuSeparator { }
                     MenuItem { text: "Fill PDF forms…"; enabled: root.isPdf; onTriggered: formsDialog.open() }
                     MenuItem { text: root.activeTool === "signature" ? "Stop signing" : "Draw signature"; checkable: true; checked: root.activeTool === "signature"; onTriggered: root.activeTool = root.activeTool === "signature" ? "select" : "signature" }
                     MenuItem { text: "Sign with certificate…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0 && !signProcess.running); onTriggered: root.beginCertificateSigning() }
@@ -1110,6 +1186,74 @@ ApplicationWindow {
     }
 
     Dialog {
+        id: documentInfoDialog
+        title: "Document information"
+        modal: true
+        width: Math.min(700, Math.max(460, root.width - 32))
+        height: Math.min(600, Math.max(280, root.height - 32))
+        standardButtons: Dialog.Close
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 660
+            implicitHeight: 520
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: root.fileName
+                color: Theme.Tokens.textPrimary
+                font.pixelSize: 15
+                font.weight: Font.DemiBold
+                elide: Text.ElideMiddle
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 7
+
+                    Repeater {
+                        model: root.documentInfoRows
+                        delegate: RowLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Text {
+                                Layout.preferredWidth: 116
+                                text: modelData.label
+                                color: Theme.Tokens.textSecondary
+                                font.pixelSize: 11
+                                font.weight: Font.Medium
+                                textFormat: Text.PlainText
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: String(modelData.value)
+                                color: Theme.Tokens.textPrimary
+                                font.pixelSize: 11
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
         id: signingOptionsDialog
         title: "Sign PDF with certificate"
         modal: true
@@ -1290,6 +1434,7 @@ ApplicationWindow {
     }
 
     Shortcut { sequence: "Ctrl+O"; onActivated: fileDialog.open() }
+    Shortcut { sequence: "Ctrl+I"; onActivated: root.openDocumentInfo() }
     Shortcut { sequence: "Ctrl+S"; onActivated: root.saveMarkup() }
     Shortcut { sequence: "Ctrl++"; onActivated: root.zoomBy(1.25) }
     Shortcut { sequence: "Ctrl+="; onActivated: root.zoomBy(1.25) }

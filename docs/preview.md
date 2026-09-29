@@ -7,6 +7,7 @@ Preview is Phasor's standalone document and image app. It follows the shell's vi
 - Open a PDF or image from the file picker, by drag and drop, or from the command line with `phasor-preview path/to/file`.
 - Browse PDF pages with thumbnails and page controls. Search PDF text, select and copy it, zoom, fit, and rotate the current view.
 - Browse embedded PDF bookmarks in the **Contents** sidebar and jump to their destinations.
+- Open **More → Document info** to inspect file size and dates, PDF page count and document metadata, or image dimensions, color mode, animation frames, resolution, and available camera metadata.
 - View Qt-supported image formats with zoom, pan, fit, and rotation.
 - Mark up images and PDF pages with pen strokes, highlights, rectangles, and text. Markup is saved automatically in an editable `*.phasor-markup.json` sidecar beside the source document; the original file is left intact.
 - Fill single-line and multi-line text fields, fixed or editable choices, checkboxes, radio buttons, and multi-select lists from the **More → Fill PDF forms** panel. Values are saved in the sidecar and applied to the exported PDF, which keeps its form fields editable. Password-marked fields are masked and their new values are kept out of the autosaved sidecar; they are included when you explicitly export, merge, print, or sign a copy.

@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unicodedata
 from contextlib import ExitStack
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -514,6 +515,82 @@ def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
         raise
     except Exception as error:
         raise ValueError(f"Could not read PDF form fields: {error}") from error
+
+
+def inspect_document(source_value: str) -> dict[str, Any]:
+    source = _source_path(source_value)
+    stat = source.stat()
+    result: dict[str, Any] = {
+        "ok": True,
+        "name": source.name,
+        "path": str(source),
+        "size_bytes": stat.st_size,
+        "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "kind": "file",
+    }
+
+    if source.suffix.lower() == ".pdf":
+        try:
+            from pypdf import PdfReader
+        except ImportError as error:
+            raise ValueError("PDF information needs pypdf. Install the python-pypdf package.") from error
+        try:
+            reader = PdfReader(str(source), strict=False)
+        except Exception as error:
+            raise ValueError(f"Could not read PDF information: {error}") from error
+        result.update({"kind": "pdf", "encrypted": bool(reader.is_encrypted)})
+        if reader.is_encrypted:
+            return result
+        result["page_count"] = len(reader.pages)
+        result["pdf_version"] = str(reader.pdf_header).lstrip("%")
+        metadata = reader.metadata or {}
+        for key, pdf_key in (
+            ("title", "/Title"),
+            ("author", "/Author"),
+            ("subject", "/Subject"),
+            ("keywords", "/Keywords"),
+            ("creator", "/Creator"),
+            ("producer", "/Producer"),
+            ("created", "/CreationDate"),
+            ("modified_document", "/ModDate"),
+        ):
+            value = metadata.get(pdf_key)
+            if value is not None and str(value):
+                result[key] = str(value)
+        return result
+
+    try:
+        from PIL import ExifTags, Image
+    except ImportError as error:
+        raise ValueError("Image information needs Pillow. Install python-pillow.") from error
+
+    try:
+        with Image.open(source) as image:
+            result.update({
+                "kind": "image",
+                "format": image.format or source.suffix.lstrip(".").upper(),
+                "width": image.width,
+                "height": image.height,
+                "mode": image.mode,
+                "frames": int(getattr(image, "n_frames", 1)),
+                "animated": bool(getattr(image, "is_animated", False)),
+            })
+            dpi = image.info.get("dpi")
+            if isinstance(dpi, (tuple, list)) and len(dpi) >= 2:
+                result["dpi"] = [round(float(dpi[0]), 2), round(float(dpi[1]), 2)]
+            exif = image.getexif()
+            for key, tag in (("camera_make", 271), ("camera_model", 272), ("captured", 306)):
+                value = exif.get(tag)
+                if value is not None:
+                    result[key] = str(value)[:512]
+            result["exif_fields"] = sum(1 for tag in exif if tag in ExifTags.TAGS)
+    except Exception:
+        result.update({
+            "kind": "image",
+            "format": source.suffix.lstrip(".").upper() or "Unknown image",
+            "metadata_error": "Image metadata is not available for this format.",
+        })
+    return result
 
 
 def _validated_pdf_form_values(reader: Any, values: dict[str, Any]) -> dict[str, Any]:
@@ -1094,6 +1171,8 @@ def main(argv: list[str]) -> int:
     try:
         if len(argv) == 2 and argv[1] == "printers":
             result = list_printers()
+        elif len(argv) == 3 and argv[1] == "inspect":
+            result = inspect_document(argv[2])
         elif len(argv) == 3 and argv[1] == "forms":
             result = inspect_pdf_forms(argv[2])
         elif len(argv) == 4 and argv[1] == "print":
@@ -1121,7 +1200,7 @@ def main(argv: list[str]) -> int:
                 raise ValueError("The certificate password is too long")
             result = sign_pdf(argv[2], argv[3], argv[4], payload["options"], password)
         else:
-            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON|- | merge OUTPUT SOURCES_JSON OPTIONS_JSON|- | image|pdf SOURCE OUTPUT OPTIONS_JSON|- | sign SOURCE OUTPUT CERTIFICATE (JSON on stdin)")
+            raise ValueError("Usage: document_ops.py printers | inspect DOCUMENT | forms PDF | print DOCUMENT OPTIONS_JSON|- | merge OUTPUT SOURCES_JSON OPTIONS_JSON|- | image|pdf SOURCE OUTPUT OPTIONS_JSON|- | sign SOURCE OUTPUT CERTIFICATE (JSON on stdin)")
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("ok", True) else 1
     except (OSError, ValueError, json.JSONDecodeError) as error:

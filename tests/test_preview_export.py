@@ -16,7 +16,7 @@ try:
 except ImportError as error:
     raise unittest.SkipTest(f"Preview export dependencies are not installed: {error}")
 
-from apps.preview.document_ops import export_image, export_pdf, inspect_pdf_forms, merge_pdfs, print_document, sign_pdf
+from apps.preview.document_ops import export_image, export_pdf, inspect_document, inspect_pdf_forms, merge_pdfs, print_document, sign_pdf
 
 
 SIGNING_AVAILABLE = all(importlib.util.find_spec(name) for name in ("pyhanko", "cryptography"))
@@ -98,6 +98,67 @@ class PreviewExportTests(unittest.TestCase):
         page_canvas.save()
         source.write_bytes(buffer.getvalue())
         return source
+
+    def test_image_inspection_reports_dimensions_format_and_file_details(self):
+        source = self.make_image("inspection.png")
+
+        result = inspect_document(str(source))
+
+        self.assertEqual(result["kind"], "image")
+        self.assertEqual(result["format"], "PNG")
+        self.assertEqual((result["width"], result["height"]), (20, 10))
+        self.assertEqual(result["frames"], 1)
+        self.assertFalse(result["animated"])
+        self.assertGreater(result["size_bytes"], 0)
+        self.assertEqual(result["name"], "inspection.png")
+        self.assertIsNotNone(datetime.fromisoformat(result["modified"]).tzinfo)
+
+    def test_svg_inspection_keeps_basic_details_when_pillow_cannot_read_the_format(self):
+        source = self.root / "vector.svg"
+        source.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>', encoding="utf-8")
+
+        result = inspect_document(str(source))
+
+        self.assertEqual(result["kind"], "image")
+        self.assertEqual(result["format"], "SVG")
+        self.assertIn("metadata_error", result)
+        self.assertGreater(result["size_bytes"], 0)
+
+    def test_pdf_inspection_reports_page_count_and_common_metadata(self):
+        source = self.root / "inspection.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(300, 200))
+        page_canvas.setTitle("Preview inspection fixture")
+        page_canvas.setAuthor("Phasor tests")
+        page_canvas.setSubject("PDF metadata")
+        page_canvas.drawString(40, 100, "Inspection")
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+
+        result = inspect_document(str(source))
+
+        self.assertEqual(result["kind"], "pdf")
+        self.assertEqual(result["page_count"], 1)
+        self.assertEqual(result["title"], "Preview inspection fixture")
+        self.assertEqual(result["author"], "Phasor tests")
+        self.assertEqual(result["subject"], "PDF metadata")
+        self.assertFalse(result["encrypted"])
+
+    def test_pdf_inspection_reports_encryption_without_unlocking_the_document(self):
+        from pypdf import PdfWriter
+
+        source = self.root / "encrypted-inspection.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=100)
+        writer.encrypt("test password")
+        with source.open("wb") as stream:
+            writer.write(stream)
+
+        result = inspect_document(str(source))
+
+        self.assertEqual(result["kind"], "pdf")
+        self.assertTrue(result["encrypted"])
+        self.assertNotIn("page_count", result)
 
     def make_signature_fixture(self, name="signed.pdf"):
         """Make a compact structural fixture for signature detection."""
