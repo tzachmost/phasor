@@ -14,6 +14,7 @@ Item {
     property string searchText: ""
     property real userZoom: 1
     property bool showThumbnails: true
+    property string sidebarMode: "pages"
     property var pageAnnotations: ({})
     property var formValues: ({})
     property var passwordFieldNames: []
@@ -23,6 +24,7 @@ Item {
     readonly property int pageCount: pageOrder.length > 0 ? pageOrder.length : Math.max(0, pdfDocument.pageCount)
     readonly property int currentPage: Math.max(0, pageOrder.indexOf(pageView.currentPage))
     readonly property int sourcePage: pageView.currentPage
+    readonly property int contentsRowCount: contentsTree.rows
     readonly property int pageRotation: ((pageView.rotation % 360) + 360) % 360
     readonly property int zoomPercent: Math.round(pageView.renderScale * 100)
     readonly property string documentStatus: pdfDocument.status === PdfDocument.Ready
@@ -136,6 +138,23 @@ Item {
         if (sourceIndex >= 0 && sourceIndex < pdfDocument.pageCount) pageView.goToPage(sourceIndex)
     }
 
+    function goToBookmark(sourceIndex, location, zoom) {
+        if (sourceIndex < 0 || sourceIndex >= pdfDocument.pageCount) return false
+        if (pageOrder.length > 0 && pageOrder.indexOf(sourceIndex) < 0) return false
+        if (pageOrder.length === 0 && savedPageOrder !== null) return false
+
+        const validLocation = location
+            && Number.isFinite(location.x) && Number.isFinite(location.y)
+            && Math.abs(location.x) < 1000000000 && Math.abs(location.y) < 1000000000
+        const validZoom = Number.isFinite(zoom) && zoom >= 0 && zoom < 1000000
+        pageView.goToLocation(
+            sourceIndex,
+            validLocation ? location : Qt.point(-1, -1),
+            validZoom ? zoom : 0
+        )
+        return true
+    }
+
     function fit() {
         userZoom = 1
         updateFit()
@@ -213,11 +232,17 @@ Item {
             root.pageOrder = []
             root.savedPageOrder = null
             root.pageRotations = ({})
+            root.sidebarMode = "pages"
             markupLayer.annotations = []
         }
         function onStatusChanged(status) {
             if (status === PdfDocument.Ready) Qt.callLater(root.applySavedPageOperations)
         }
+    }
+
+    PdfBookmarkModel {
+        id: bookmarkModel
+        document: pdfDocument
     }
 
     Row {
@@ -226,7 +251,7 @@ Item {
 
         Rectangle {
             id: thumbnailPanel
-            width: root.showThumbnails ? 176 : 0
+            width: root.showThumbnails ? 224 : 0
             height: parent.height
             color: Theme.Tokens.surface
             visible: width > 0
@@ -235,16 +260,27 @@ Item {
                 anchors.fill: parent
                 spacing: 0
 
-                Text {
-                    text: "PAGES"
+                Row {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
                     height: 42
-                    leftPadding: Theme.Tokens.spacingL
-                    rightPadding: Theme.Tokens.spacingM
-                    verticalAlignment: Text.AlignVCenter
-                    color: Theme.Tokens.textSecondary
-                    font.pixelSize: 10
-                    font.bold: true
-                    font.letterSpacing: 1.2
+                    spacing: 2
+
+                    ToolButton {
+                        text: "Pages"
+                        height: parent.height
+                        checkable: true
+                        checked: root.sidebarMode === "pages"
+                        onClicked: root.sidebarMode = "pages"
+                    }
+
+                    ToolButton {
+                        text: "Contents"
+                        height: parent.height
+                        checkable: true
+                        checked: root.sidebarMode === "contents"
+                        onClicked: root.sidebarMode = "contents"
+                    }
                 }
 
                 ListView {
@@ -253,6 +289,7 @@ Item {
                     height: parent.height - 42
                     clip: true
                     spacing: Theme.Tokens.spacingM
+                    visible: root.sidebarMode === "pages"
                     model: pdfDocument.status === PdfDocument.Ready ? root.pageCount : 0
 
                     delegate: Rectangle {
@@ -301,6 +338,77 @@ Item {
                         }
                     }
                 }
+
+                TreeView {
+                    id: contentsTree
+                    width: parent.width
+                    height: parent.height - 42
+                    clip: true
+                    visible: root.sidebarMode === "contents"
+                    model: bookmarkModel
+
+                    delegate: Rectangle {
+                        required property int row
+                        required property int depth
+                        required property bool hasChildren
+                        required property bool expanded
+                        required property string title
+                        required property int page
+                        required property point location
+                        required property real zoom
+
+                        implicitWidth: contentsTree.width
+                        implicitHeight: 34
+                        color: "transparent"
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.goToBookmark(page, location, zoom)
+                        }
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 6 + depth * 10
+                            anchors.rightMargin: 6
+                            spacing: 1
+
+                            ToolButton {
+                                width: 24
+                                height: parent.height
+                                visible: hasChildren
+                                text: expanded ? "⌄" : "›"
+                                onClicked: contentsTree.toggleExpanded(row)
+                            }
+
+                            Item {
+                                width: hasChildren ? 0 : 24
+                                height: 1
+                                visible: !hasChildren
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - 30
+                                text: title
+                                color: Theme.Tokens.textSecondary
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+                }
+
+            }
+
+            Text {
+                anchors.centerIn: parent
+                width: parent.width - 24
+                visible: root.sidebarMode === "contents" && contentsTree.rows === 0
+                text: "This PDF has no table of contents."
+                color: Theme.Tokens.textSecondary
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
             }
 
             Rectangle {
@@ -315,6 +423,8 @@ Item {
             id: documentViewport
             width: parent.width - thumbnailPanel.width
             height: parent.height
+            onWidthChanged: Qt.callLater(root.updateFit)
+            onHeightChanged: Qt.callLater(root.updateFit)
             clip: true
             contentWidth: Math.max(width, pageView.x + pageView.width)
             contentHeight: Math.max(height, pageView.y + pageView.height)

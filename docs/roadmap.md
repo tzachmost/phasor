@@ -50,3 +50,16 @@ The 1.0 checklist is complete. Submitting the stable Arch recipe to the AUR is a
 - [x] Merge PDFs into a new copy, preserving pages and avoiding imported form field name collisions.
 - [x] Print prepared images and PDFs through configured CUPS printers.
 - [x] Add certificate-based PDF signing.
+
+## Preview multi-tool follow-on
+
+The first Preview milestone is complete. Continue toward a broader document and image workspace, using the [Apple Preview guide](https://support.apple.com/en-gb/guide/preview/welcome/mac) as a feature reference while keeping Phasor's Wayland and sidecar-based workflow.
+
+- [x] Browse embedded PDF bookmarks in a Contents sidebar and jump to their destinations.
+- [ ] Add single-page, continuous-scroll, and two-page reading layouts.
+- [ ] Add and move individual PDF pages, including blank pages and pages selected from another open document.
+- [ ] Add text-anchored highlighting, underline, strike-through, and note annotations.
+- [ ] Add a document information panel for PDF metadata and image dimensions, format, and metadata.
+- [ ] Add PDF password entry/protection and file-size reduction with explicit copy-based export.
+- [ ] Expand image workflows with flip, animated-image frame browsing, and background removal.
+- [ ] Exercise Preview with complex public forms, outlines, signed files, large scans, and real printer queues.
