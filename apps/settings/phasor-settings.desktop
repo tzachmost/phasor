@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+GenericName=Desktop Settings
+Comment=Appearance, tiling, devices, and keyboard shortcuts
+Exec=phasor-settings
+Icon=preferences-system
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=Phasor;Tiling;Theme;Windows;Desktop;
+StartupWMClass=phasor-settings
+X-Phasor-Managed=true

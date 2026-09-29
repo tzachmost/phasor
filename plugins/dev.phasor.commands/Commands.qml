@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
 import "../../shell/theme" as Theme
+import "../../shell/components" as Components
 Item {
     id: commandPalette
     width: 1
@@ -170,7 +171,6 @@ Item {
     PanelWindow {
         anchors { top: true; bottom: true; left: true; right: true }
         visible: commandPalette.open || commandPalette.closing
-        focusable: commandPalette.open
         exclusiveZone: 0
         color: "transparent"
         WlrLayershell.layer: WlrLayer.Overlay
@@ -185,7 +185,7 @@ Item {
             MouseArea { anchors.fill: parent; onClicked: commandPalette.open = false }
         }
 
-        Rectangle {
+        Components.PhasorSurface {
             width: Math.min(620, parent.width - 40)
             height: Math.min(520, parent.height - 64)
             anchors.horizontalCenter: parent.horizontalCenter
@@ -193,10 +193,10 @@ Item {
             anchors.topMargin: Math.max(48, parent.height * 0.14)
             opacity: commandPalette.open ? 1 : 0
             scale: commandPalette.open ? 1 : 0.975
-            radius: Theme.Tokens.radiusLarge
+            radius: Theme.Tokens.radiusMedium
             color: Theme.Tokens.surface
             border.width: 1
-            border.color: Theme.Tokens.borderFocused
+            border.color: Theme.Tokens.separator
             Behavior on opacity { NumberAnimation { duration: commandPalette.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: commandPalette.open ? Easing.OutCubic : Easing.InCubic } }
             Behavior on scale { NumberAnimation { duration: commandPalette.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: commandPalette.open ? Easing.OutCubic : Easing.InCubic } }
 

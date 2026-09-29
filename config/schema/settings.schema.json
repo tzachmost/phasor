@@ -3,16 +3,44 @@
   "$id": "https://phasor.dev/schema/settings-v1.json",
   "title": "Phasor settings",
   "type": "object",
-  "required": ["schemaVersion", "appearance", "launcher", "commands", "settings", "spaces", "windows", "dock", "plugins"],
+  "required": [
+    "schemaVersion",
+    "appearance",
+    "launcher",
+    "commands",
+    "settings",
+    "spaces",
+    "windows",
+    "dock",
+    "plugins"
+  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": {
+      "const": 1
+    },
     "appearance": {
       "type": "object",
       "properties": {
-        "theme": { "enum": ["dark", "light", "system"], "default": "dark" },
-        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#8bd5ca" },
-        "reducedMotion": { "type": "boolean", "default": false },
-        "wallpaper": { "type": "string" }
+        "theme": {
+          "enum": [
+            "dark",
+            "light",
+            "system"
+          ],
+          "default": "dark"
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#8bd5ca"
+        },
+        "reducedMotion": {
+          "type": "boolean",
+          "default": false
+        },
+        "wallpaper": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
@@ -20,49 +48,101 @@
       "type": "object",
       "properties": {
         "shortcut": {
-          "enum": ["Super+Space", "Super+Alt+Space", "Super+D", "Super+R", "Alt+Space", "Ctrl+Space"],
+          "enum": [
+            "Super+Space",
+            "Super+Alt+Space",
+            "Super+D",
+            "Super+R",
+            "Alt+Space",
+            "Ctrl+Space"
+          ],
           "default": "Super+Space"
         },
-        "showRecents": { "type": "boolean" },
-        "favorites": { "type": "array", "items": { "type": "string" } }
+        "showRecents": {
+          "type": "boolean"
+        },
+        "favorites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       },
       "additionalProperties": false
     },
     "commands": {
       "type": "object",
       "properties": {
-        "shortcut": { "enum": ["Super+/", "Super+Shift+/", "Ctrl+Alt+Space", "Super+Alt+/", "Ctrl+Shift+P"], "default": "Super+/" }
+        "shortcut": {
+          "enum": [
+            "Super+/",
+            "Super+Shift+/",
+            "Ctrl+Alt+Space",
+            "Super+Alt+/",
+            "Ctrl+Shift+P"
+          ],
+          "default": "Super+/"
+        }
       },
       "additionalProperties": false
     },
     "settings": {
       "type": "object",
       "properties": {
-        "shortcut": { "enum": ["Super+,", "Super+Alt+Comma", "Super+Shift+Comma", "Ctrl+Alt+S"], "default": "Super+," }
+        "shortcut": {
+          "enum": [
+            "Super+,",
+            "Super+Alt+Comma",
+            "Super+Shift+Comma",
+            "Ctrl+Alt+S"
+          ],
+          "default": "Super+,"
+        }
       },
       "additionalProperties": false
     },
     "spaces": {
       "type": "object",
       "properties": {
-        "count": { "type": "integer", "minimum": 1, "maximum": 32 },
-        "animationDuration": { "type": "integer", "minimum": 0, "maximum": 2000 }
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "animationDuration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2000
+        }
       },
       "additionalProperties": false
     },
     "windows": {
       "type": "object",
       "properties": {
-        "focusMode": { "enum": ["click", "sloppy"] },
-        "raiseOnFocus": { "type": "boolean" }
+        "focusMode": {
+          "enum": [
+            "click",
+            "sloppy"
+          ]
+        },
+        "raiseOnFocus": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
     "dock": {
       "type": "object",
       "properties": {
-        "showCloseButtons": { "type": "boolean", "default": true },
-        "showEmptyState": { "type": "boolean", "default": true }
+        "showCloseButtons": {
+          "type": "boolean",
+          "default": true
+        },
+        "showEmptyState": {
+          "type": "boolean",
+          "default": true
+        }
       },
       "additionalProperties": false
     },
@@ -70,8 +150,107 @@
       "type": "object",
       "additionalProperties": {
         "type": "object",
-        "properties": { "enabled": { "type": "boolean" } }
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
       }
+    },
+    "tiling": {
+      "type": "object",
+      "properties": {
+        "layout": {
+          "enum": [
+            "grid",
+            "tile",
+            "center_tile",
+            "vertical_tile",
+            "scroller",
+            "vertical_scroller",
+            "monocle",
+            "deck"
+          ],
+          "default": "grid"
+        },
+        "innerHorizontal": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 0,
+          "maximum": 100
+        },
+        "innerVertical": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 0,
+          "maximum": 100
+        },
+        "outerHorizontal": {
+          "type": "integer",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 100
+        },
+        "outerVertical": {
+          "type": "integer",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 100
+        },
+        "smartGaps": {
+          "type": "boolean",
+          "default": false
+        },
+        "borderWidth": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 12
+        },
+        "hideSingleBorder": {
+          "type": "boolean",
+          "default": false
+        },
+        "masterCount": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 10
+        },
+        "masterRatio": {
+          "type": "number",
+          "default": 0.55,
+          "minimum": 0.1,
+          "maximum": 0.9
+        },
+        "newIsMaster": {
+          "type": "boolean",
+          "default": true
+        },
+        "scrollerWidth": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0.1,
+          "maximum": 1.0
+        },
+        "centerScroller": {
+          "type": "boolean",
+          "default": false
+        },
+        "preferCenter": {
+          "type": "boolean",
+          "default": false
+        },
+        "smartSplit": {
+          "type": "boolean",
+          "default": false
+        },
+        "preserveSplit": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

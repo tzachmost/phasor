@@ -12,6 +12,7 @@ Item {
     property string requestedScheme: "dark"
     property color accentColor: "#8bd5ca"
     property bool reducedMotion: false
+    property real motionScale: 1
 
     SystemPalette { id: systemPalette }
 
@@ -40,14 +41,14 @@ Item {
     readonly property int radiusSmall: 2
     readonly property int radiusMedium: 4
     readonly property int radiusLarge: 8
-    readonly property int animationFast: reducedMotion ? 0 : 100
-    readonly property int animationHover: reducedMotion ? 0 : 135
-    readonly property int animationNormal: reducedMotion ? 0 : 190
-    readonly property int animationLayout: reducedMotion ? 0 : 240
-    readonly property int animationEnter: reducedMotion ? 0 : 285
-    readonly property int animationExit: reducedMotion ? 0 : 170
-    readonly property int animationSlow: reducedMotion ? 0 : 340
-    readonly property int animationStagger: reducedMotion ? 0 : 22
+    readonly property int animationFast: reducedMotion ? 0 : Math.round(100 * motionScale)
+    readonly property int animationHover: reducedMotion ? 0 : Math.round(135 * motionScale)
+    readonly property int animationNormal: reducedMotion ? 0 : Math.round(190 * motionScale)
+    readonly property int animationLayout: reducedMotion ? 0 : Math.round(240 * motionScale)
+    readonly property int animationEnter: reducedMotion ? 0 : Math.round(285 * motionScale)
+    readonly property int animationExit: reducedMotion ? 0 : Math.round(170 * motionScale)
+    readonly property int animationSlow: reducedMotion ? 0 : Math.round(340 * motionScale)
+    readonly property int animationStagger: reducedMotion ? 0 : Math.round(22 * motionScale)
 
     function refresh() {
         themeRequest.exec(["phasorctl", "rpc", "theme.get", "{}"])
@@ -63,6 +64,7 @@ Item {
                     tokens.requestedScheme = settings.theme || "dark"
                     tokens.accentColor = settings.accent || "#8bd5ca"
                     tokens.reducedMotion = Boolean(settings.reducedMotion)
+                    tokens.motionScale = Math.max(0, Number(settings.animationDuration === undefined ? 200 : settings.animationDuration)) / 200
                 } catch (error) {
                     console.warn("Phasor theme settings returned invalid JSON", error)
                 }

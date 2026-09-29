@@ -47,15 +47,17 @@ launcher, settings, a bar, optional dock, desktop shortcuts and service adapters
 
 %install
 mkdir -p %{buildroot}%{_datadir}/phasor
-cp -a README.md LICENSE AGENTS.md preview.qml shell plugins apps core config session scripts docs %{buildroot}%{_datadir}/phasor/
+cp -a README.md LICENSE AGENTS.md preview.qml settings.qml shell plugins apps core config session scripts docs %{buildroot}%{_datadir}/phasor/
 mkdir -p %{buildroot}%{_bindir} %{buildroot}%{_datadir}/wayland-sessions
 ln -s ../share/phasor/scripts/phasorctl %{buildroot}%{_bindir}/phasorctl
 ln -s ../share/phasor/scripts/phasor-core %{buildroot}%{_bindir}/phasor-core
 ln -s ../share/phasor/scripts/phasor-doctor %{buildroot}%{_bindir}/phasor-doctor
 ln -s ../share/phasor/scripts/phasor-preview %{buildroot}%{_bindir}/phasor-preview
+ln -s ../share/phasor/scripts/phasor-settings %{buildroot}%{_bindir}/phasor-settings
 ln -s ../share/phasor/session/phasor-session %{buildroot}%{_bindir}/phasor-session
 mkdir -p %{buildroot}%{_datadir}/applications
 install -m 644 apps/preview/phasor-preview.desktop %{buildroot}%{_datadir}/applications/phasor-preview.desktop
+install -m 644 apps/settings/phasor-settings.desktop %{buildroot}%{_datadir}/applications/phasor-settings.desktop
 sed 's|@PHASOR_SESSION_PATH@|%{_bindir}/phasor-session|g' \
   session/phasor.desktop.in > %{buildroot}%{_datadir}/wayland-sessions/phasor.desktop
 
@@ -67,8 +69,10 @@ sed 's|@PHASOR_SESSION_PATH@|%{_bindir}/phasor-session|g' \
 %{_bindir}/phasor-core
 %{_bindir}/phasor-doctor
 %{_bindir}/phasor-preview
+%{_bindir}/phasor-settings
 %{_bindir}/phasor-session
 %{_datadir}/applications/phasor-preview.desktop
+%{_datadir}/applications/phasor-settings.desktop
 %{_datadir}/wayland-sessions/phasor.desktop
 
 %changelog

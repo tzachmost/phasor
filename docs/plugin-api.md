@@ -35,7 +35,7 @@ The service API also includes:
 | `files.rename`, `files.trash`, `files.copy` | `files.rename`, `files.trash`, `files.copy` | User Home file actions; Trash uses GIO |
 | `files.share` | `clipboard.write` | Copy the local file URI to the Wayland clipboard |
 | `settings.get`, `settings.update` | `settings.read`, `settings.control` | Validated per-user settings |
-| `launcher.toggle`, `settings.toggle`, `commands.toggle` | `apps.read`, `settings.control` | Toggle the built-in overlays |
+| `launcher.toggle`, `settings.toggle`, `commands.toggle` | `apps.read`, `settings.control` | Toggle Launcher/Commands or present the standalone Settings app |
 
 Launcher file actions are restricted to the user's Home directory. Rename stays in the current directory, Trash asks for confirmation in the Launcher, and copy creates a uniquely named duplicate beside the source. Share copies a `file://` URI for pasting into another application. Clipboard history exposes a preview and numeric item id; `clipboard.restore` decodes the selected item in the core before copying it back to the Wayland clipboard.
 
@@ -53,3 +53,5 @@ The grant records the plugin bundle hash and becomes invalid if any file changes
 The built-in Settings plugin declares the audio, network, Bluetooth, brightness, and notification capabilities used by its System page. Those controls invoke the same per-user adapters documented above; unavailable commands and hardware are shown in the UI instead of blocking the rest of Settings. The built-in Commands plugin provides a searchable action palette; it declares only the app, settings, and Space capabilities used by its actions. Settings shortcut and Space preferences render into a private runtime Mango config, which the core reloads after an update when the session owns that config. A custom config selected through `PHASOR_MANGO_CONFIG` remains in control.
 
 Surfaces declare `anchor`, `thickness`, `reservesWorkArea`, `overlaysWindows`, `autoHide`, `priority`, and `slots`. The host reports occupied regions and permits one enabled reserving surface per edge (the highest priority is selected). Overlay surfaces do not reserve work area. Extension providers declare `contributions`; the host exposes compatible providers through the named slot registry. The built-in Bar uses `bar.left` and `bar.right`; the optional Dock uses `dock.left`, `dock.center`, `dock.right`, and `dock.status`.
+
+`settings.toggle` retains its compatibility response and action event, but launches or presents the separate Settings application. It accepts `appearance`, `shell` (Desktop), `system`, `shortcuts`, `tiling` (with `mango` retained as an alias), and `about`. The new optional `tiling` settings object is validated and triggers managed session reloads. `theme.get` includes `animationDuration` in milliseconds, shared with window motion.

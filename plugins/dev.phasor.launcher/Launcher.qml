@@ -1,4 +1,5 @@
 import QtQuick
+import "Search.js" as Search
 import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
@@ -20,6 +21,8 @@ Item {
     property var spaceItems: []
     property bool showingActions: false
     property var selectedItem: null
+    property var searchController: null
+    property bool searching: false
     property bool indexing: false
     property bool renamingFile: false
     property bool confirmingTrash: false
@@ -65,46 +68,21 @@ Item {
     }
 
     function search() {
-        const text = query.trim()
+        if (!phasor) return
+        if (!searchController) searchController = Search.create(
+            function(method, params, callback) { phasor.request(method, params, callback) },
+            function(result) {
+                searching = false
+                results = result.items
+                errorText = result.error
+                indexing = result.indexing
+                selectedIndex = Math.min(selectedIndex, Math.max(0, results.length - 1))
+            })
         errorText = ""
         infoText = ""
-        if (text.length === 0) {
-            phasor.request("apps.search", { query: "", limit: 30 }, function(result) {
-                if (result.error) { errorText = result.error; return }
-                results = (result.items || []).map(function(app) {
-                    return { kind: "app", id: app.id, name: app.name, detail: app.genericName || app.comment || "Application", icon: app.icon, favorite: app.favorite, recent: app.recent }
-                })
-                selectedIndex = 0
-            })
-            return
-        }
-        let remaining = text.length >= 2 ? 2 : 1
-        let apps = []
-        let files = []
-        const update = function() {
-            if (--remaining > 0) return
-            results = apps.concat(files)
-            selectedIndex = Math.min(selectedIndex, Math.max(results.length - 1, 0))
-        }
-        phasor.request("apps.search", { query: text, limit: 24 }, function(result) {
-            if (result.error) errorText = result.error
-            else apps = (result.items || []).map(function(app) {
-                return { kind: "app", id: app.id, name: app.name, detail: app.genericName || app.comment || "Application", icon: app.icon, favorite: app.favorite, recent: app.recent }
-            })
-            update()
-        })
-        if (text.length >= 2) {
-            phasor.request("files.search", { query: text, limit: 30 }, function(result) {
-                if (result.error) errorText = result.error
-                else {
-                    files = (result.items || []).map(function(file) {
-                        return { kind: "file", id: file.path, name: file.name, detail: file.path, directory: file.directory }
-                    })
-                    indexing = Boolean(result.status && result.status.indexing)
-                }
-                update()
-            })
-        }
+        searching = true
+        indexing = false
+        searchController.search(query)
     }
 
     function iconSource(icon) {
@@ -146,11 +124,15 @@ Item {
             renamingFile = false
             confirmingTrash = false
             searchInput.text = ""
+            searchDebounce.stop()
             search()
             loadSpaces()
             inputFocusTimer.restart()
             Qt.callLater(function() { searchInput.forceActiveFocus() })
         } else {
+            if (searchController) searchController.cancel()
+            searchDebounce.stop()
+            searching = false
             closing = true
             closeAnimationTimer.restart()
         }
@@ -194,10 +176,10 @@ Item {
         id: overlay
         anchors { top: true; bottom: true; left: true; right: true }
         visible: launcher.open || launcher.closing
-        focusable: launcher.open
         exclusiveZone: 0
         color: "transparent"
         WlrLayershell.layer: WlrLayer.Overlay
+        // Do not also bind focusable: it downgrades Exclusive to OnDemand.
         WlrLayershell.keyboardFocus: launcher.open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         WlrLayershell.namespace: "phasor-launcher"
         onVisibleChanged: if (visible && launcher.open) inputFocusTimer.restart()
@@ -210,24 +192,24 @@ Item {
             MouseArea { anchors.fill: parent; onClicked: launcher.open = false }
         }
 
-        Rectangle {
+        Components.PhasorSurface {
             id: panel
-            width: Math.min(680, parent.width - 40)
-            height: Math.min(640, parent.height - 64)
+            width: Math.min(720, parent.width - 40)
+            height: Math.min(650, parent.height - 64)
             anchors.centerIn: parent
             opacity: launcher.open ? 1 : 0
             scale: launcher.open ? 1 : 0.975
             transformOrigin: Item.Center
-            radius: Theme.Tokens.radiusLarge
+            radius: Theme.Tokens.radiusMedium
             color: Theme.Tokens.surface
             border.width: 1
-            border.color: Theme.Tokens.borderFocused
+            border.color: Theme.Tokens.separator
             Behavior on opacity { NumberAnimation { duration: launcher.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: launcher.open ? Easing.OutCubic : Easing.InCubic } }
             Behavior on scale { NumberAnimation { duration: launcher.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: launcher.open ? Easing.OutCubic : Easing.InCubic } }
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.Tokens.spacingL
+                anchors.margins: Theme.Tokens.spacingXL
                 spacing: Theme.Tokens.spacingM
 
                 RowLayout {
@@ -245,17 +227,19 @@ Item {
                         Layout.fillWidth: true
                         focus: launcher.open
                         activeFocusOnTab: true
-                        placeholderText: "Search apps and files"
+                        placeholderText: "Find an app, file, or setting…"
+                        selectionColor: Theme.Tokens.accent
+                        selectedTextColor: Theme.Tokens.background
                         color: Theme.Tokens.textPrimary
                         placeholderTextColor: Theme.Tokens.textSecondary
                         font.pixelSize: 18
                         selectByMouse: true
                         background: Rectangle { color: "transparent" }
-                        onTextChanged: { launcher.query = text; searchDebounce.restart() }
+                        onTextChanged: { launcher.query = text; if (launcher.searchController) launcher.searchController.cancel(); launcher.searching = true; launcher.selectedIndex = 0; searchDebounce.restart() }
                         Keys.onPressed: function(event) {
                             if (event.key === Qt.Key_Escape) { if (launcher.showingActions) launcher.showingActions = false; else launcher.open = false; event.accepted = true }
-                            else if (event.key === Qt.Key_Down) { launcher.selectedIndex = Math.min(launcher.results.length - 1, launcher.selectedIndex + (launcher.query.trim().length === 0 ? gridResults.columns : 1)); event.accepted = true }
-                            else if (event.key === Qt.Key_Up) { launcher.selectedIndex = Math.max(0, launcher.selectedIndex - (launcher.query.trim().length === 0 ? gridResults.columns : 1)); event.accepted = true }
+                            else if (event.key === Qt.Key_Down) { launcher.selectedIndex = Math.min(launcher.results.length - 1, launcher.selectedIndex + (launcher.query.trim().length === 0 ? gridResults.columnCount : 1)); event.accepted = true }
+                            else if (event.key === Qt.Key_Up) { launcher.selectedIndex = Math.max(0, launcher.selectedIndex - (launcher.query.trim().length === 0 ? gridResults.columnCount : 1)); event.accepted = true }
                             else if (launcher.query.trim().length === 0 && event.key === Qt.Key_Left) { launcher.selectedIndex = Math.max(0, launcher.selectedIndex - 1); event.accepted = true }
                             else if (launcher.query.trim().length === 0 && event.key === Qt.Key_Right) { launcher.selectedIndex = Math.min(launcher.results.length - 1, launcher.selectedIndex + 1); event.accepted = true }
                             else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ShiftModifier)) { launcher.openActions(); event.accepted = true }
@@ -325,22 +309,26 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
+                    ScrollIndicator.vertical: ScrollIndicator {}
                     model: launcher.results
                     currentIndex: launcher.selectedIndex
+                    highlightMoveDuration: Theme.Tokens.animationFast
                     spacing: Theme.Tokens.spacingXS
                     add: Transition { NumberAnimation { properties: "opacity,scale"; from: 0; to: 1; duration: Theme.Tokens.animationNormal; easing.type: Easing.OutCubic } }
                     remove: Transition { NumberAnimation { properties: "opacity,scale"; to: 0; duration: Theme.Tokens.animationExit; easing.type: Easing.InCubic } }
                     displaced: Transition { NumberAnimation { properties: "y"; duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
-                    visible: launcher.query.trim().length > 0 && !launcher.showingActions
+                    visible: launcher.query.trim().length > 0 && !launcher.showingActions && launcher.results.length > 0
                     delegate: Rectangle {
                         required property int index
                         required property var modelData
                         width: resultList.width
                         height: 58
-                        scale: index === launcher.selectedIndex ? 1.012 : 1
+                        scale: 1
                         Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                         radius: Theme.Tokens.radiusSmall
-                        color: index === launcher.selectedIndex ? Theme.Tokens.surfaceRaised : "transparent"
+                        color: index === launcher.selectedIndex ? Qt.alpha(Theme.Tokens.accent, .10) : "transparent"
+                        border.width: 1
+                        border.color: index === launcher.selectedIndex ? Qt.alpha(Theme.Tokens.accent, .28) : "transparent"
                         Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
                         RowLayout {
                             anchors.fill: parent
@@ -384,12 +372,15 @@ Item {
                     id: gridResults
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: launcher.query.trim().length === 0 && !launcher.showingActions
+                    visible: launcher.query.trim().length === 0 && !launcher.showingActions && launcher.results.length > 0
                     clip: true
+                    ScrollIndicator.vertical: ScrollIndicator {}
                     model: launcher.results
                     currentIndex: launcher.selectedIndex
+                    highlightMoveDuration: Theme.Tokens.animationFast
+                    readonly property int columnCount: Math.max(1, Math.floor(width / 132))
                     cellWidth: Math.floor(width / Math.max(1, Math.floor(width / 132)))
-                    cellHeight: 88
+                    cellHeight: 100
                     add: Transition { NumberAnimation { properties: "opacity,scale"; from: 0; to: 1; duration: Theme.Tokens.animationNormal; easing.type: Easing.OutCubic } }
                     remove: Transition { NumberAnimation { properties: "opacity,scale"; to: 0; duration: Theme.Tokens.animationExit; easing.type: Easing.InCubic } }
                     displaced: Transition { NumberAnimation { properties: "x,y"; duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
@@ -398,10 +389,12 @@ Item {
                         required property var modelData
                         width: gridResults.cellWidth - 8
                         height: gridResults.cellHeight - 8
-                        scale: index === launcher.selectedIndex ? 1.035 : 1
+                        scale: 1
                         Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                         radius: Theme.Tokens.radiusSmall
-                        color: index === launcher.selectedIndex ? Theme.Tokens.surfaceRaised : "transparent"
+                        color: index === launcher.selectedIndex ? Qt.alpha(Theme.Tokens.accent, .10) : "transparent"
+                        border.width: 1
+                        border.color: index === launcher.selectedIndex ? Qt.alpha(Theme.Tokens.accent, .28) : "transparent"
                         Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
                         Column {
                             anchors.fill: parent
@@ -412,13 +405,13 @@ Item {
                                 height: 38
                                 radius: Theme.Tokens.radiusSmall
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                color: Theme.Tokens.appIconSurface
+                                color: "transparent"
                                 IconImage {
                                     id: gridAppIcon
                                     anchors.centerIn: parent
-                                    width: 32
-                                    height: 32
-                                    implicitSize: 32
+                                    width: 36
+                                    height: 36
+                                    implicitSize: 40
                                     source: launcher.iconSource(modelData.icon)
                                     visible: status === Image.Ready
                                 }
@@ -446,6 +439,18 @@ Item {
                             onEntered: launcher.selectedIndex = index
                             onClicked: launcher.activate(index)
                         }
+                    }
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: launcher.results.length === 0 && !launcher.showingActions
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 10
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: launcher.searching ? "Searching…" : "Nothing found yet"; color: Theme.Tokens.textPrimary; font.pixelSize: 18 }
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: launcher.searching ? "Apps and files, all in one place." : "Try an app name or a different filename."; color: Theme.Tokens.textSecondary; font.pixelSize: 12 }
                     }
                 }
 
@@ -566,7 +571,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    visible: launcher.errorText.length > 0 || launcher.infoText.length > 0 || launcher.indexing || launcher.results.length === 0
+                    visible: launcher.errorText.length > 0 || launcher.infoText.length > 0 || launcher.indexing
                     text: launcher.errorText.length > 0 ? launcher.errorText : (launcher.infoText.length > 0 ? launcher.infoText : (launcher.indexing ? "Indexing Home in the background…" : (launcher.results.length === 0 ? "No matching apps or files" : "")))
                     color: launcher.errorText.length > 0 ? Theme.Tokens.danger : Theme.Tokens.textSecondary
                     font.pixelSize: 12
@@ -581,8 +586,8 @@ Item {
                         slotName: "launcher.actions"
                         providers: launcher.phasor ? launcher.phasor.extensions("launcher.actions") : []
                     }
-                    Text { text: "↑ ↓  Navigate"; color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
-                    Text { text: launcher.showingActions ? "ESC  Close" : "↵ Open · ⇧↵ Actions"; color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
+                    Text { text: "↑ ↓"; color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
+                    Text { text: launcher.showingActions ? "ESC  Close" : "↵ Open · ⇧↵ More"; color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
                 }
             }
         }

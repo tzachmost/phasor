@@ -40,7 +40,7 @@ stdenvNoCC.mkDerivation {
 
     mkdir -p "$out/share/phasor" "$out/bin" "$out/share/wayland-sessions"
     cp -R "$src/README.md" "$src/AGENTS.md" "$src/LICENSE" \
-      "$src/preview.qml" "$src/shell" "$src/plugins" "$src/core" "$src/config" \
+      "$src/preview.qml" "$src/settings.qml" "$src/shell" "$src/plugins" "$src/core" "$src/config" \
       "$src/session" "$src/scripts" "$src/docs" "$out/share/phasor/"
     cp -R "$src/apps" "$out/share/phasor/"
 
@@ -49,7 +49,7 @@ stdenvNoCC.mkDerivation {
       glib swaybg cliphist swaynotificationcenter flameshot playerctl brightnessctl
       wireplumber networkmanager bluez polkit_gnome
     ]}"
-    for name in phasorctl phasor-core phasor-doctor; do
+    for name in phasorctl phasor-core phasor-doctor phasor-settings; do
       makeWrapper "$out/share/phasor/scripts/$name" "$out/bin/$name" \
         --set PHASOR_HOME "$out/share/phasor" \
         --prefix PATH : "$runtimePath"
@@ -65,6 +65,8 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$out/share/applications"
     install -m 644 "$out/share/phasor/apps/preview/phasor-preview.desktop" \
       "$out/share/applications/phasor-preview.desktop"
+
+    install -m 644 "$out/share/phasor/apps/settings/phasor-settings.desktop" "$out/share/applications/phasor-settings.desktop"
 
     substitute "$out/share/phasor/session/phasor.desktop.in" \
       "$out/share/wayland-sessions/phasor.desktop" \

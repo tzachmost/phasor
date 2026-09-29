@@ -23,10 +23,11 @@ link_owned() {
     ln -s "$source" "$target"
 }
 
-for name in phasorctl phasor-core phasor-doctor phasor-preview; do
+for name in phasorctl phasor-core phasor-doctor phasor-preview phasor-settings; do
     link_owned "$ROOT/scripts/$name" "$BIN_DIR/$name"
 done
 link_owned "$ROOT/apps/preview/phasor-preview.desktop" "$APPLICATIONS_DIR/phasor-preview.desktop"
+link_owned "$ROOT/apps/settings/phasor-settings.desktop" "$APPLICATIONS_DIR/phasor-settings.desktop"
 link_owned "$ROOT/session/phasor-session" "$BIN_DIR/phasor-session"
 
 if [[ -L "$PHASOR_CONFIG/settings.json" && ! -e "$PHASOR_CONFIG/settings.json" ]]; then

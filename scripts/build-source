@@ -16,7 +16,7 @@ tar \
   --exclude='*.egg-info' \
   --transform="s,^,phasor-$VERSION/," \
   -cf - -C "$ROOT" \
-  README.md AGENTS.md LICENSE pyproject.toml flake.nix flake.lock preview.qml \
+  README.md AGENTS.md LICENSE pyproject.toml flake.nix flake.lock preview.qml settings.qml \
   core config session scripts shell plugins apps docs package/nix package/fedora/phasor-shell.spec \
   | gzip -n -9 > "$OUTPUT"
 

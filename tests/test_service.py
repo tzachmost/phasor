@@ -24,11 +24,13 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result, {"toggled": True})
         self.assertEqual(events[0]["name"], "commands.toggle")
 
-    def test_settings_toggle_can_open_a_specific_page(self):
+    @patch("phasor_core.services.launch_settings_app")
+    def test_settings_toggle_can_open_a_specific_page(self, spawn):
         events = []
         service = Services(events.append)
         service.invoke("settings.toggle", {"section": "shortcuts"})
         self.assertEqual(events[0]["data"], {"section": "shortcuts"})
+        spawn.assert_called_once_with("shortcuts")
         with self.assertRaisesRegex(ValueError, "Unknown Settings section"):
             service.invoke("settings.toggle", {"section": "not-a-page"})
 
@@ -82,9 +84,9 @@ class ServiceTests(unittest.TestCase):
         events = []
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"HOME": directory, "XDG_CONFIG_HOME": directory}):
             service = Services(events.append)
-            result = service.invoke("settings.update", {"patch": {"plugins": {"dev.phasor.dock": {"enabled": True}}}})
-            self.assertTrue(result["plugins"]["dev.phasor.dock"]["enabled"])
-            self.assertEqual(events[0]["type"], "plugin.enabled")
+            result = service.invoke("settings.update", {"patch": {"plugins": {"dev.phasor.dock": {"enabled": False}}}})
+            self.assertFalse(result["plugins"]["dev.phasor.dock"]["enabled"])
+            self.assertEqual(events[0]["type"], "plugin.disabled")
             self.assertEqual(events[0]["name"], "dev.phasor.dock")
             self.assertEqual(events[-1]["name"], "settings.changed")
 
@@ -138,7 +140,8 @@ class ServiceTests(unittest.TestCase):
             service.invoke("apps.search", {"query": "", "limit": 30})
         search.assert_called_once_with("", 30, ["pinned.desktop"], True)
 
-    def test_launcher_and_settings_toggles_are_capability_gated(self):
+    @patch("phasor_core.services.launch_settings_app")
+    def test_launcher_and_settings_toggles_are_capability_gated(self, _spawn):
         service = Services(lambda _event: None)
         with patch.object(service.plugins, "require_capability") as require:
             self.assertEqual(service.invoke_plugin("example.plugin", "settings.toggle", {}), {"toggled": True})

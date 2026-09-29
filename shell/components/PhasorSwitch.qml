@@ -15,7 +15,7 @@ Switch {
         implicitHeight: 24
         x: control.leftPadding
         y: control.height / 2 - height / 2
-        radius: height / 2
+        radius: Theme.Tokens.radiusSmall
         color: control.checked ? Theme.Tokens.accent : Theme.Tokens.surfaceRaised
         border.width: 1
         border.color: control.checked ? Theme.Tokens.accent : Theme.Tokens.separator
@@ -27,8 +27,8 @@ Switch {
             height: 16
             x: control.checked ? parent.width - width - 4 : 4
             y: (parent.height - height) / 2
-            radius: height / 2
-            color: Theme.Tokens.background
+            radius: Theme.Tokens.radiusSmall
+            color: control.checked ? Theme.Tokens.background : Theme.Tokens.textSecondary
             Behavior on x { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
             Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
         }

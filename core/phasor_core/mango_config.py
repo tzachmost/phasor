@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from . import tiling
 from .config import (
     COMMAND_SHORTCUT_CHOICES,
     LAUNCHER_SHORTCUT_CHOICES,
@@ -121,11 +122,12 @@ def render_mango_config(settings: dict[str, Any], base: str) -> str:
         "maximizescreencolor", "globalcolor", "overlaycolor",
     }
     animation_keys = {"animations", "layer_animations"}
+    tiling_keys = {spec[0] for spec in tiling.FIELDS.values()}
     for line in base.splitlines():
         stripped = line.strip()
         key, separator, _value = stripped.partition("=")
         key = key.strip().casefold()
-        if separator and key in theme_keys:
+        if separator and key in theme_keys | tiling_keys:
             continue
         if separator and (key in animation_keys or key.startswith("animation_duration_")):
             continue
@@ -156,7 +158,7 @@ def render_mango_config(settings: dict[str, Any], base: str) -> str:
         f"sloppyfocus={1 if windows.get('focusMode', 'click') == 'sloppy' else 0}",
         f"focus_on_activate={1 if windows.get('raiseOnFocus', True) else 0}",
         *_theme_config_lines(appearance),
-        "tagrule=id:*,layout_name:grid",
+        *tiling.config_lines(settings.get("tiling", {})),
         f"bind={launcher_modifiers},{launcher_key},spawn,phasorctl launcher toggle",
         f"bind={settings_modifiers},{settings_key},spawn,phasorctl settings toggle",
         f"bind={command_modifiers},{command_key},spawn,phasorctl commands toggle",

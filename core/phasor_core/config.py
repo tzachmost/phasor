@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import tiling
+
 LAUNCHER_SHORTCUT_CHOICES = (
     "Super+Space",
     "Super+Alt+Space",
@@ -101,13 +103,14 @@ def load_settings() -> dict[str, Any]:
 def validate_settings(merged: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(merged, dict) or merged.get("schemaVersion") != 1:
         raise ValueError("schemaVersion must be 1")
-    allowed_sections = {"schemaVersion", "appearance", "launcher", "commands", "settings", "spaces", "windows", "dock", "plugins"}
+    allowed_sections = {"schemaVersion", "appearance", "launcher", "commands", "settings", "spaces", "windows", "dock", "plugins", "tiling"}
     unknown_sections = set(merged) - allowed_sections
     if unknown_sections:
         raise ValueError("Unknown settings sections: " + ", ".join(sorted(unknown_sections)))
     for section in ("appearance", "launcher", "commands", "settings", "spaces", "windows", "dock", "plugins"):
         if not isinstance(merged.get(section), dict):
             raise ValueError(f"Settings key '{section}' must be a JSON object")
+    tiling.validate(merged.get("tiling", {}))
     appearance = merged["appearance"]
     unknown_appearance = set(appearance) - {"theme", "accent", "reducedMotion", "wallpaper"}
     if unknown_appearance:

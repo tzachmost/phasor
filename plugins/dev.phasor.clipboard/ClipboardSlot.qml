@@ -57,7 +57,6 @@ Item {
         id: historyWindow
         anchors { top: true; bottom: true; left: true; right: true }
         visible: clipboard.open
-        focusable: clipboard.open
         exclusiveZone: 0
         color: "transparent"
         WlrLayershell.layer: WlrLayer.Overlay

@@ -57,5 +57,23 @@
     "dev.phasor.commands": {
       "enabled": true
     }
+  },
+  "tiling": {
+    "layout": "grid",
+    "innerHorizontal": 8,
+    "innerVertical": 8,
+    "outerHorizontal": 10,
+    "outerVertical": 10,
+    "smartGaps": false,
+    "borderWidth": 2,
+    "hideSingleBorder": false,
+    "masterCount": 1,
+    "masterRatio": 0.55,
+    "newIsMaster": true,
+    "scrollerWidth": 0.8,
+    "centerScroller": false,
+    "preferCenter": false,
+    "smartSplit": false,
+    "preserveSplit": false
   }
 }

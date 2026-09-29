@@ -38,7 +38,7 @@ package() {
   install -d "$dest"
   install -d "$pkgdir/usr/bin" "$pkgdir/usr/share/wayland-sessions"
   tar -c --exclude='__pycache__' --exclude='*.py[co]' --exclude='*.egg-info' \
-    -f - README.md AGENTS.md LICENSE preview.qml shell plugins apps core config session scripts docs |
+    -f - README.md AGENTS.md LICENSE preview.qml settings.qml shell plugins apps core config session scripts docs |
     tar -x -f - -C "$dest"
   printf 'Managed by the Phasor Arch package.\n' > "$dest/.phasor-managed"
   chmod 644 "$dest/.phasor-managed"
@@ -48,9 +48,11 @@ package() {
   ln -s ../share/phasor/scripts/phasor-core "$pkgdir/usr/bin/phasor-core"
   ln -s ../share/phasor/scripts/phasor-doctor "$pkgdir/usr/bin/phasor-doctor"
   ln -s ../share/phasor/scripts/phasor-preview "$pkgdir/usr/bin/phasor-preview"
+  ln -s ../share/phasor/scripts/phasor-settings "$pkgdir/usr/bin/phasor-settings"
   ln -s ../share/phasor/session/phasor-session "$pkgdir/usr/bin/phasor-session"
   install -d "$pkgdir/usr/share/applications"
   install -m 644 apps/preview/phasor-preview.desktop "$pkgdir/usr/share/applications/phasor-preview.desktop"
+  install -m 644 apps/settings/phasor-settings.desktop "$pkgdir/usr/share/applications/phasor-settings.desktop"
   install -d "$pkgdir/usr/share/wayland-sessions"
   cat > "$pkgdir/usr/share/wayland-sessions/phasor.desktop" <<'EOF'
 [Desktop Entry]

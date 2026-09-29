@@ -131,8 +131,9 @@ class Services:
             return {"toggled": True}
         if method == "settings.toggle":
             section = params.get("section")
-            if section not in {None, "appearance", "shell", "system", "shortcuts", "mango", "about"}:
+            if section not in {None, "appearance", "shell", "system", "shortcuts", "tiling", "mango", "about"}:
                 raise ValueError("Unknown Settings section")
+            launch_settings_app(section or "")
             self.publish({"type": "action", "name": "settings.toggle", "data": {"section": section}})
             return {"toggled": True}
         if method == "commands.toggle":
@@ -156,7 +157,7 @@ class Services:
             event_data = {"keys": sorted(patch)}
             launcher_patch = patch.get("launcher")
             appearance_patch = patch.get("appearance")
-            mango_settings_changed = bool({"spaces", "windows", "commands", "settings"}.intersection(patch)) or (
+            mango_settings_changed = bool({"spaces", "windows", "commands", "settings", "tiling"}.intersection(patch)) or (
                 isinstance(launcher_patch, dict) and "shortcut" in launcher_patch
             ) or (
                 isinstance(appearance_patch, dict)
@@ -403,10 +404,23 @@ class Services:
         self.system.close()
 
 
+def launch_settings_app(section: str) -> None:
+    from .mango_config import project_root
+    from .config import state_home
+    log_dir = state_home()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "settings.log").open("ab") as log:
+        subprocess.Popen(
+            [str(project_root() / "scripts" / "phasor-settings"), section],
+            stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+        )
+
+
 def load_theme() -> dict[str, Any]:
     from .config import load_settings
     from pathlib import Path
-    settings = load_settings().get("appearance", {})
+    all_settings = load_settings()
+    settings = all_settings.get("appearance", {})
     wallpaper = str(settings.get("wallpaper", "")).strip()
     theme = settings.get("theme", "dark")
     if wallpaper:
@@ -414,7 +428,7 @@ def load_theme() -> dict[str, Any]:
         if not path.is_absolute():
             path = Path.home() / path
         wallpaper = str(path)
-    return {"theme": theme, "accent": settings.get("accent", "#8bd5ca"), "reducedMotion": bool(settings.get("reducedMotion", False)), "wallpaper": wallpaper, "background": "#f3f5f8" if theme == "light" else "#111318"}
+    return {"animationDuration": all_settings.get("spaces", {}).get("animationDuration", 200), "theme": theme, "accent": settings.get("accent", "#8bd5ca"), "reducedMotion": bool(settings.get("reducedMotion", False)), "wallpaper": wallpaper, "background": "#f3f5f8" if theme == "light" else "#111318"}
 
 
 def _boolean(value: Any, name: str) -> bool:
