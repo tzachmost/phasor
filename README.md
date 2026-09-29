@@ -40,7 +40,7 @@ For other installation paths and update/removal instructions, see [docs/install.
 
 ## Preview
 
-Preview opens images and PDFs, fills PDF forms, draws editable marks and signatures, prints through CUPS, crops and converts images, and exports PDFs with page reorder, exclusion, and rotation. Exported files are new copies; editable work stays in a sidecar beside the original. See [docs/preview.md](docs/preview.md) for formats and optional printing/PDF dependencies.
+Preview opens images and PDFs, fills PDF forms, draws editable marks and signatures, merges PDFs, prints through CUPS, crops and converts images, and exports PDFs with page reorder, exclusion, and rotation. Exported files are new copies; editable work stays in a sidecar beside the original. See [docs/preview.md](docs/preview.md) for formats and optional printing/PDF dependencies.
 
 ## Release status
 

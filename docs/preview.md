@@ -10,6 +10,7 @@ Preview is Phasor's standalone document and image app. It follows the shell's vi
 - Mark up images and PDF pages with pen strokes, highlights, rectangles, and text. Markup is saved automatically in an editable `*.phasor-markup.json` sidecar beside the source document; the original file is left intact.
 - Fill PDF text fields, choices, checkboxes, radio buttons, and multi-select lists from the **More → Fill PDF forms** panel. Values are saved in the sidecar and applied to the exported PDF, which keeps its form fields editable.
 - Draw a visual signature on an image or PDF with a mouse, touchscreen, or stylus using **More → Draw signature**. Signature strokes remain editable in the sidecar and are included in exports and print copies.
+- Merge the current PDF with other PDFs using **More → Merge PDFs**. Preview applies the current document's page order, form values, and markup, then appends the selected PDFs into a new file. Imported form fields are grouped under their source filename and import order to avoid collisions.
 - Crop images by dragging a selection. Export flattened PNG, JPEG, WebP, TIFF, or BMP copies; choose a maximum output size and image quality.
 - Export PDFs with markup drawn into the page content while the original text stays searchable. Move pages, exclude pages, and rotate individual pages for the exported copy. These PDF page operations are saved in the markup sidecar.
 - Print images and PDFs with a selected printer, copy count, and page range. Preview sends a temporary prepared copy with markup and filled form values applied, leaving the source untouched.
@@ -21,4 +22,4 @@ The PDF viewer uses Qt Quick PDF. It is an optional runtime module so the core s
 
 Export always writes a new file. Image markup is painted into the copy. PDF form values are applied while fields remain fillable. PDF markup and visual signatures are added as vector page content; the sidecar retains the editable strokes and text. PDF page order, excluded pages, and rotations are applied only to the exported copy, so the original PDF pages remain recoverable.
 
-Certificate-based digital signing and PDF merge remain future work.
+Certificate-based digital signing remains future work.

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -618,6 +619,71 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
     return {"ok": True, "path": str(output), "pages": len(page_order)}
 
 
+def merge_pdfs(source_values: list[str], output_value: str, options: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as error:
+        raise ValueError("PDF merging needs pypdf. Install the python-pypdf package.") from error
+
+    if not isinstance(source_values, list) or not 2 <= len(source_values) <= 64:
+        raise ValueError("Choose between 2 and 64 PDF documents to merge")
+    if any(not isinstance(value, str) for value in source_values) or not isinstance(options, dict):
+        raise ValueError("Merge paths and options have an invalid format")
+    sources = [_source_path(value) for value in source_values]
+    if any(source.suffix.lower() != ".pdf" for source in sources):
+        raise ValueError("Every merge input must be a PDF document")
+    output = _output_path(sources[0], output_value, ".pdf")
+    if output.resolve() in {source.resolve() for source in sources}:
+        raise ValueError("Choose a new file name so none of the original PDFs are overwritten")
+
+    markup = options.get("markup", {"version": 1, "kind": "pdf"})
+    total_pages = 0
+    writer = PdfWriter()
+    try:
+        with tempfile.TemporaryDirectory(prefix="phasor-preview-merge-") as temporary:
+            prepared_first = Path(temporary) / "phasor-merge-first.pdf"
+            export_pdf(str(sources[0]), str(prepared_first), {"markup": markup})
+            with ExitStack() as stack:
+                seen_form_names: set[str] = set()
+                for document_index, path in enumerate([prepared_first, *sources[1:]], start=1):
+                    stream = stack.enter_context(path.open("rb"))
+                    reader = PdfReader(stream, strict=False)
+                    if reader.is_encrypted:
+                        raise ValueError(f"Password-protected PDFs cannot be merged ({path.name})")
+                    page_count = len(reader.pages)
+                    if page_count < 1:
+                        raise ValueError(f"The PDF has no pages to merge ({path.name})")
+                    total_pages += page_count
+                    if total_pages > 20_000:
+                        raise ValueError("Merged PDFs may contain up to 20,000 pages")
+                    fields = reader.get_fields() or {}
+                    if document_index == 1:
+                        seen_form_names.update(str(name) for name in fields)
+                    elif fields:
+                        stem = re.sub(r"[^A-Za-z0-9_-]+", "_", path.stem).strip("_-")[:64] or "document"
+                        prefix = f"{stem}_{document_index}"
+                        suffix = 2
+                        while prefix in seen_form_names or any(
+                            f"{prefix}.{name}" in seen_form_names for name in fields
+                        ):
+                            prefix = f"{stem}_{document_index}_{suffix}"
+                            suffix += 1
+                        reader.add_form_topname(prefix)
+                        seen_form_names.update(f"{prefix}.{name}" for name in fields)
+                    writer.append(reader)
+
+                def write(stream) -> None:
+                    writer.write(stream)
+
+                _atomic_save(output, write)
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError(f"Could not merge these PDFs: {error}") from error
+
+    return {"ok": True, "path": str(output), "pages": total_pages, "documents": len(sources)}
+
+
 def list_printers() -> dict[str, Any]:
     if not shutil.which("lp"):
         return {"ok": False, "printers": [], "error": "Printing needs CUPS command-line tools (lp)."}
@@ -743,13 +809,21 @@ def main(argv: list[str]) -> int:
             if not isinstance(options, dict):
                 raise ValueError("Print options must be an object")
             result = print_document(argv[2], options)
+        elif len(argv) == 5 and argv[1] == "merge":
+            sources = json.loads(argv[3])
+            options = json.loads(argv[4])
+            if not isinstance(sources, list) or any(not isinstance(path, str) for path in sources):
+                raise ValueError("Merge input paths must be a list of strings")
+            if not isinstance(options, dict):
+                raise ValueError("Merge options must be an object")
+            result = merge_pdfs(sources, argv[2], options)
         elif len(argv) == 5 and argv[1] in {"image", "pdf"}:
             options = json.loads(argv[4])
             if not isinstance(options, dict):
                 raise ValueError("Export options must be an object")
             result = export_image(argv[2], argv[3], options) if argv[1] == "image" else export_pdf(argv[2], argv[3], options)
         else:
-            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON | image|pdf SOURCE OUTPUT OPTIONS_JSON")
+            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON | merge OUTPUT SOURCES_JSON OPTIONS_JSON | image|pdf SOURCE OUTPUT OPTIONS_JSON")
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("ok", True) else 1
     except (OSError, ValueError, json.JSONDecodeError) as error:

@@ -36,6 +36,7 @@ ApplicationWindow {
     property var printerNames: []
     property string defaultPrinter: ""
     property string printerStatus: ""
+    property var mergeInputPaths: []
     property var loadedMarkup: ({})
     property var pendingTextPosition: ({ x: 0, y: 0 })
     property string helperPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/markup_store.py"
@@ -150,6 +151,45 @@ ApplicationWindow {
         if (viewerLoader.item && viewerLoader.item.setFormValue) viewerLoader.item.setFormValue(field.name, value)
     }
 
+    function beginMerge() {
+        if (!root.isPdf || !root.sourcePath || !viewerLoader.item || viewerLoader.item.pageCount < 1) return
+        mergeInputDialog.open()
+    }
+
+    function prepareMerge(files) {
+        const paths = [root.sourcePath]
+        const seen = Object.create(null)
+        seen[root.sourcePath] = true
+        for (const file of files) {
+            const path = root.pathFromUrl(file)
+            if (!path || seen[path]) continue
+            seen[path] = true
+            paths.push(path)
+        }
+        if (paths.length < 2) {
+            root.saveStatus = "Choose at least one additional PDF to merge."
+            return
+        }
+        root.mergeInputPaths = paths
+        mergeOutputDialog.open()
+    }
+
+    function mergeTo(value) {
+        if (!root.isPdf || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
+        let output = root.pathFromUrl(value)
+        if (!/\.pdf$/i.test(output)) output += ".pdf"
+        const options = { markup: viewerLoader.item.serializeMarkup() }
+        mergeProcess.exec([
+            "python3",
+            root.documentOpsPath,
+            "merge",
+            output,
+            JSON.stringify(root.mergeInputPaths),
+            JSON.stringify(options)
+        ])
+        saveStatus = "Merging " + root.mergeInputPaths.length + " PDFs…"
+    }
+
     function openPrintDialog() {
         if (!sourcePath || !viewerLoader.item) return
         printerStatus = "Checking available printers…"
@@ -226,6 +266,23 @@ ApplicationWindow {
             : root.exportFormat === "JPEG" ? ["JPEG image (*.jpg *.jpeg)"]
             : [root.exportFormat + " image (*." + (root.exportFormat === "TIFF" ? "tif *.tiff" : root.exportFormat.toLowerCase()) + ")"]
         onAccepted: root.exportTo(selectedFile)
+    }
+
+    FileDialog {
+        id: mergeInputDialog
+        title: "Choose PDFs to append"
+        fileMode: FileDialog.OpenFiles
+        nameFilters: ["PDF documents (*.pdf)"]
+        onAccepted: root.prepareMerge(selectedFiles)
+    }
+
+    FileDialog {
+        id: mergeOutputDialog
+        title: "Save merged PDF copy"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: ["PDF document (*.pdf)"]
+        onAccepted: root.mergeTo(selectedFile)
     }
 
     onSourceUrlChanged: {
@@ -316,6 +373,24 @@ ApplicationWindow {
             }
         }
         stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview export:", text) }
+    }
+
+    Process {
+        id: mergeProcess
+        command: ["python3"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.saveStatus = result.ok
+                        ? "Merged " + result.documents + " PDFs · " + result.pages + " pages · " + root.nameFromPath(result.path)
+                        : (result.error || "Could not merge these PDFs")
+                } catch (error) {
+                    root.saveStatus = "Could not merge these PDFs"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview merge:", text) }
     }
 
     Process {
@@ -425,6 +500,7 @@ ApplicationWindow {
                     MenuItem { text: "Fill PDF forms…"; enabled: root.isPdf; onTriggered: formsDialog.open() }
                     MenuItem { text: root.activeTool === "signature" ? "Stop signing" : "Draw signature"; checkable: true; checked: root.activeTool === "signature"; onTriggered: root.activeTool = root.activeTool === "signature" ? "select" : "signature" }
                     MenuSeparator { }
+                    MenuItem { text: "Merge PDFs…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0); onTriggered: root.beginMerge() }
                     MenuItem { text: "Print…"; enabled: Boolean(root.sourcePath && viewerLoader.item); onTriggered: root.openPrintDialog() }
                 }
 

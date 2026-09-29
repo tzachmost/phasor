@@ -47,5 +47,6 @@ The 1.0 checklist is complete. Submitting the stable Arch recipe to the AUR is a
 - [x] Export PDF markup into a flattened PDF, with page reorder, exclusion, and rotation operations.
 - [x] Fill common PDF form fields and export the values while preserving editable fields.
 - [x] Draw visual signatures and include them in export and print copies.
+- [x] Merge PDFs into a new copy, preserving pages and avoiding imported form field name collisions.
 - [x] Print prepared images and PDFs through configured CUPS printers.
-- [ ] Add certificate-based PDF signing and PDF merge.
+- [ ] Add certificate-based PDF signing.

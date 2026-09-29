@@ -12,7 +12,7 @@ try:
 except ImportError as error:
     raise unittest.SkipTest(f"Preview export dependencies are not installed: {error}")
 
-from apps.preview.document_ops import export_image, export_pdf, inspect_pdf_forms, print_document
+from apps.preview.document_ops import export_image, export_pdf, inspect_pdf_forms, merge_pdfs, print_document
 
 
 class PreviewExportTests(unittest.TestCase):
@@ -341,6 +341,87 @@ class PreviewExportTests(unittest.TestCase):
         self.assertIn(b"20 80 m", content)
         self.assertIn(b"180 80 l", content)
         self.assertIn(b"S", content)
+
+    def test_pdf_merge_appends_documents_after_the_prepared_current_pdf(self):
+        first = self.root / "first.pdf"
+        second = self.root / "second.pdf"
+        first_buffer = io.BytesIO()
+        first_canvas = canvas.Canvas(first_buffer, pagesize=(200, 100))
+        first_canvas.drawString(20, 50, "KEEP THIS PAGE")
+        first_canvas.showPage()
+        first_canvas.drawString(20, 50, "PREPARED PAGE")
+        first_canvas.showPage()
+        first_canvas.save()
+        first.write_bytes(first_buffer.getvalue())
+        second_buffer = io.BytesIO()
+        second_canvas = canvas.Canvas(second_buffer, pagesize=(200, 100))
+        second_canvas.drawString(20, 50, "APPENDED PAGE")
+        second_canvas.save()
+        second.write_bytes(second_buffer.getvalue())
+        output = self.root / "merged.pdf"
+
+        result = merge_pdfs(
+            [str(first), str(second)],
+            str(output),
+            {
+                "markup": {
+                    "version": 1,
+                    "kind": "pdf",
+                    "pages": {
+                        "1": [
+                            {
+                                "type": "text",
+                                "x": 0.1,
+                                "y": 0.5,
+                                "text": "Merged note",
+                                "size": 0.04,
+                                "color": "#ff0000",
+                            }
+                        ]
+                    },
+                    "page_order": [1],
+                }
+            },
+        )
+
+        merged = PdfReader(output)
+        self.assertEqual(result["documents"], 2)
+        self.assertEqual(result["pages"], 2)
+        self.assertEqual(len(merged.pages), 2)
+        self.assertIn("PREPARED PAGE", merged.pages[0].extract_text())
+        self.assertIn("Merged note", merged.pages[0].extract_text())
+        self.assertIn("APPENDED PAGE", merged.pages[1].extract_text())
+        self.assertEqual(len(PdfReader(first).pages), 2)
+
+    def test_pdf_merge_namespaces_imported_form_fields_and_preserves_values(self):
+        first = self.make_form_pdf("form-one.pdf")
+        second = self.make_form_pdf("form-two.pdf")
+        output = self.root / "forms-merged.pdf"
+
+        merge_pdfs(
+            [str(first), str(second)],
+            str(output),
+            {
+                "markup": {
+                    "version": 1,
+                    "kind": "pdf",
+                    "pages": {},
+                    "form_values": {"full_name": "Ada Lovelace"},
+                }
+            },
+        )
+
+        fields = PdfReader(output).get_fields()
+        self.assertEqual(fields["full_name"]["/V"], "Ada Lovelace")
+        self.assertEqual(fields["form-two_2.full_name"]["/V"], "")
+        self.assertEqual(len(PdfReader(output).pages), 2)
+
+    def test_pdf_merge_rejects_overwriting_any_source(self):
+        first = self.make_form_pdf("first.pdf")
+        second = self.make_form_pdf("second.pdf")
+
+        with self.assertRaisesRegex(ValueError, "original PDFs are overwritten"):
+            merge_pdfs([str(first), str(second)], str(second), {})
 
     def test_print_submits_a_flattened_copy_with_printer_options(self):
         source = self.root / "print-source.pdf"
