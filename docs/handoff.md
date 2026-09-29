@@ -35,6 +35,7 @@ Arch/CachyOS, Fedora, Universal Blue/OSTree, and NixOS install, update, diagnost
 - The `v1.0.0` GitHub release is published with the source archive, Arch package, Fedora RPM/SRPM, and `SHA256SUMS`; every published asset checksum matches the local release manifest.
 - The `1.1.0.dev0` source archive rebuilt reproducibly, the Fedora RPM/SRPM built with the Preview app included, and Nix flake outputs evaluated for all systems.
 - The Fedora RPM/SRPM rebuilt with certificate signing as an optional private-venv feature. `nix flake check --no-build --all-systems` evaluated the pyHanko-enabled packages on x86_64 and aarch64, and the x86_64 package built successfully.
+- Final package checks after the Settings and Commands updates rebuilt the default Nix package and Fedora RPM. Both package trees include `dev.phasor.commands/Commands.qml` and `phasor_core/mango_config.py`.
 - The fresh guest had an earlier installed core manager, so its doctor reported duplicate diagnostics for identical source and system plugin bundles. The current manager ignores identical bundles quietly and retains a diagnostic for differing contents; regression tests cover both cases. The host Phasor session was left running untouched.
 - Earlier source/system install and uninstall flows passed in temporary roots; DNF5 and OSTree adapter command paths passed simulations with mocked package tools.
 
@@ -47,6 +48,6 @@ Arch/CachyOS, Fedora, Universal Blue/OSTree, and NixOS install, update, diagnost
 ## Development notes
 
 - Use `~/Work/phasor` as the normal checkout and `./scripts/doctor` for installed-system diagnostics.
-- The Preview print compatibility fix is committed as `2183b70`. The current Settings and Commands work is ready for its source commit and push.
+- The Preview print compatibility fix is committed as `2183b70`. PDF redaction is committed as `264359a`, and Settings plus the Commands palette are committed as `c8d96b2`; both latest commits are pushed to `origin/main`.
 - Keep compositor and system tools behind `phasor-core`; built-in and third-party QML calls go through capability-checked services.
 - Keep the system Phasor session and user configuration separate from headless test runs. The current desktop already has a system-installed Phasor session; do not stop or rewrite it while testing the repository checkout.
