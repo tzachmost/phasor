@@ -41,9 +41,13 @@ Item {
     readonly property int radiusMedium: 4
     readonly property int radiusLarge: 8
     readonly property int animationFast: reducedMotion ? 0 : 100
-    readonly property int animationNormal: reducedMotion ? 0 : 200
-    readonly property int animationSlow: reducedMotion ? 0 : 320
-    readonly property string animationEaseOut: "cubic-bezier(0.16, 1, 0.3, 1)"
+    readonly property int animationHover: reducedMotion ? 0 : 135
+    readonly property int animationNormal: reducedMotion ? 0 : 190
+    readonly property int animationLayout: reducedMotion ? 0 : 240
+    readonly property int animationEnter: reducedMotion ? 0 : 285
+    readonly property int animationExit: reducedMotion ? 0 : 170
+    readonly property int animationSlow: reducedMotion ? 0 : 340
+    readonly property int animationStagger: reducedMotion ? 0 : 22
 
     function refresh() {
         themeRequest.exec(["phasorctl", "rpc", "theme.get", "{}"])

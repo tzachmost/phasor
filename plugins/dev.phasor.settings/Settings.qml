@@ -12,6 +12,7 @@ Item {
     height: 1
     property var phasor
     property bool open: false
+    property bool closing: false
     property bool loading: false
     property bool loadingSystem: false
     property bool savingAppearance: false
@@ -298,13 +299,25 @@ Item {
 
     onOpenChanged: {
         if (open) {
+            closing = false
+            closeAnimationTimer.stop()
             load(false)
             refreshSystem()
             Qt.callLater(function() {
                 if (preferences.section === "mango" && preferences.advancedMangoOpen) mangoConfigEditor.forceActiveFocus()
                 else schemeBox.forceActiveFocus()
             })
+        } else {
+            closing = true
+            closeAnimationTimer.restart()
         }
+    }
+
+    Timer {
+        id: closeAnimationTimer
+        interval: Theme.Tokens.animationExit
+        repeat: false
+        onTriggered: preferences.closing = false
     }
 
     Connections {
@@ -329,7 +342,7 @@ Item {
     PanelWindow {
         id: overlay
         anchors { top: true; bottom: true; left: true; right: true }
-        visible: preferences.open
+        visible: preferences.open || preferences.closing
         focusable: preferences.open
         exclusiveZone: 0
         color: "transparent"
@@ -340,6 +353,8 @@ Item {
         Rectangle {
             anchors.fill: parent
             color: Theme.Tokens.overlayScrim
+            opacity: preferences.open ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: preferences.open ? Theme.Tokens.animationNormal : Theme.Tokens.animationExit; easing.type: preferences.open ? Easing.OutCubic : Easing.InCubic } }
             MouseArea { anchors.fill: parent; onClicked: preferences.open = false }
         }
 
@@ -347,10 +362,14 @@ Item {
             width: Math.min(960, parent.width - 48)
             height: Math.min(680, parent.height - 48)
             anchors.centerIn: parent
+            opacity: preferences.open ? 1 : 0
+            scale: preferences.open ? 1 : 0.985
             radius: Theme.Tokens.radiusLarge
             color: Theme.Tokens.surface
             border.width: 1
             border.color: Theme.Tokens.separator
+            Behavior on opacity { NumberAnimation { duration: preferences.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: preferences.open ? Easing.OutCubic : Easing.InCubic } }
+            Behavior on scale { NumberAnimation { duration: preferences.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: preferences.open ? Easing.OutCubic : Easing.InCubic } }
 
             RowLayout {
                 anchors.fill: parent
@@ -413,6 +432,8 @@ Item {
                                     color: preferences.section === pageButton.modelData.id ? Theme.Tokens.surface : "transparent"
                                     border.width: preferences.section === pageButton.modelData.id ? 1 : 0
                                     border.color: Theme.Tokens.separator
+                                    Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
+                                    Behavior on border.width { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                                 }
                                 contentItem: RowLayout {
                                     spacing: Theme.Tokens.spacingS

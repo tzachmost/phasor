@@ -10,8 +10,11 @@ Item {
     height: 1
     property var phasor
     property bool open: false
+    property bool closing: false
     property string query: ""
     property string errorText: ""
+    property string pendingSettingsSection: ""
+    property bool pendingLauncher: false
     property var settingsData: ({})
     property var shortcuts: []
     property var commands: [
@@ -72,20 +75,30 @@ Item {
         else open = false
     }
 
+    function openSettingsAfterExit(section) {
+        pendingSettingsSection = section
+        open = false
+    }
+
+    function openLauncherAfterExit() {
+        pendingLauncher = true
+        open = false
+    }
+
     function run(command) {
         if (!phasor || !command) return
         errorText = ""
         if (command.kind === "shortcut") return
         if (command.id === "launcher") {
-            phasor.request("launcher.toggle", {}, finishRequest)
+            openLauncherAfterExit()
         } else if (command.id === "settings") {
-            phasor.request("settings.toggle", { section: "appearance" }, finishRequest)
+            openSettingsAfterExit("appearance")
         } else if (command.id === "shortcuts") {
-            phasor.request("settings.toggle", { section: "shortcuts" }, finishRequest)
+            openSettingsAfterExit("shortcuts")
         } else if (command.id === "mango") {
-            phasor.request("settings.toggle", { section: "mango" }, finishRequest)
+            openSettingsAfterExit("mango")
         } else if (command.id === "system") {
-            phasor.request("settings.toggle", { section: "system" }, finishRequest)
+            openSettingsAfterExit("system")
         } else if (command.id === "previousSpace") {
             phasor.request("spaces.previous", {}, finishRequest)
         } else if (command.id === "nextSpace") {
@@ -115,12 +128,34 @@ Item {
     onQueryChanged: filterCommands()
     onOpenChanged: {
         if (open) {
+            closing = false
+            closeAnimationTimer.stop()
             query = ""
             errorText = ""
             filterCommands()
             refreshSettings()
             loadShortcuts()
             Qt.callLater(function() { commandSearch.forceActiveFocus() })
+        } else {
+            closing = true
+            closeAnimationTimer.restart()
+        }
+    }
+
+    Timer {
+        id: closeAnimationTimer
+        interval: Theme.Tokens.animationExit
+        repeat: false
+        onTriggered: {
+            commandPalette.closing = false
+            if (commandPalette.pendingSettingsSection.length > 0) {
+                const section = commandPalette.pendingSettingsSection
+                commandPalette.pendingSettingsSection = ""
+                commandPalette.phasor.request("settings.toggle", { section: section }, commandPalette.finishRequest)
+            } else if (commandPalette.pendingLauncher) {
+                commandPalette.pendingLauncher = false
+                commandPalette.phasor.request("launcher.toggle", {}, commandPalette.finishRequest)
+            }
         }
     }
 
@@ -134,7 +169,7 @@ Item {
 
     PanelWindow {
         anchors { top: true; bottom: true; left: true; right: true }
-        visible: commandPalette.open
+        visible: commandPalette.open || commandPalette.closing
         focusable: commandPalette.open
         exclusiveZone: 0
         color: "transparent"
@@ -145,6 +180,8 @@ Item {
         Rectangle {
             anchors.fill: parent
             color: Theme.Tokens.overlayScrim
+            opacity: commandPalette.open ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: commandPalette.open ? Theme.Tokens.animationNormal : Theme.Tokens.animationExit; easing.type: commandPalette.open ? Easing.OutCubic : Easing.InCubic } }
             MouseArea { anchors.fill: parent; onClicked: commandPalette.open = false }
         }
 
@@ -154,10 +191,14 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
             anchors.topMargin: Math.max(48, parent.height * 0.14)
+            opacity: commandPalette.open ? 1 : 0
+            scale: commandPalette.open ? 1 : 0.975
             radius: Theme.Tokens.radiusLarge
             color: Theme.Tokens.surface
             border.width: 1
             border.color: Theme.Tokens.borderFocused
+            Behavior on opacity { NumberAnimation { duration: commandPalette.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: commandPalette.open ? Easing.OutCubic : Easing.InCubic } }
+            Behavior on scale { NumberAnimation { duration: commandPalette.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: commandPalette.open ? Easing.OutCubic : Easing.InCubic } }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -200,12 +241,17 @@ Item {
                     model: commandPalette.filteredCommands
                     currentIndex: commandPalette.selectedIndex
                     spacing: Theme.Tokens.spacingXS
+                    add: Transition { NumberAnimation { properties: "opacity,scale"; from: 0; to: 1; duration: Theme.Tokens.animationNormal; easing.type: Easing.OutCubic } }
+                    remove: Transition { NumberAnimation { properties: "opacity,scale"; to: 0; duration: Theme.Tokens.animationExit; easing.type: Easing.InCubic } }
+                    displaced: Transition { NumberAnimation { properties: "y"; duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
                     delegate: Item {
                         id: commandRow
                         required property var modelData
                         required property int index
                         width: commandList.width
                         height: 58
+                        scale: commandPalette.selectedIndex === commandRow.index ? 1.01 : 1
+                        Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
 
                         Rectangle {
                             anchors.fill: parent
@@ -213,6 +259,8 @@ Item {
                             color: commandPalette.selectedIndex === commandRow.index ? Theme.Tokens.surfaceRaised : "transparent"
                             border.width: commandPalette.selectedIndex === commandRow.index ? 1 : 0
                             border.color: Theme.Tokens.separator
+                            Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
+                            Behavior on border.width { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                         }
                         ColumnLayout {
                             anchors.fill: parent

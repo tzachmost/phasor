@@ -101,14 +101,17 @@ Item {
 
         Rectangle {
             width: Math.min(parent.width - 24, Math.max(120, dockItems.implicitWidth + 28))
-            height: 58
+            height: 62
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            radius: Theme.Tokens.radiusLarge
+            anchors.bottomMargin: 4
+            radius: Theme.Tokens.radiusMedium
             color: Theme.Tokens.surface
             border.width: 1
             border.color: Theme.Tokens.separator
+            clip: true
+            Behavior on width { NumberAnimation { duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: Theme.Tokens.animationNormal } }
 
             Rectangle {
                 anchors.left: parent.left
@@ -121,10 +124,13 @@ Item {
             Flickable {
                 anchors.fill: parent
                 anchors.margins: Theme.Tokens.spacingS
+                anchors.topMargin: Theme.Tokens.spacingXS
+                anchors.bottomMargin: Theme.Tokens.spacingXS
                 contentWidth: dockItems.implicitWidth
                 contentHeight: height
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
+                Behavior on contentWidth { NumberAnimation { duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
 
                 Row {
                     id: dockItems
@@ -144,28 +150,46 @@ Item {
                         model: dock.windows
                         delegate: Item {
                             id: windowTile
+                            required property int index
                             required property var modelData
+                            property bool introduced: false
+                            property bool actionsShown: tileHover.containsMouse || windowTile.modelData.minimized
                             width: 46
                             height: 46
                             anchors.verticalCenter: parent.verticalCenter
-                            opacity: windowTile.modelData.minimized ? 0.64 : 1
+                            opacity: introduced ? (windowTile.modelData.minimized ? 0.62 : 1) : 0
+                            scale: !introduced ? 0.82 : tileHover.containsMouse ? 1.1 : (windowTile.modelData.focused ? 1.035 : 1)
+                            Behavior on x { NumberAnimation { duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
+                            Behavior on opacity { NumberAnimation { duration: Theme.Tokens.animationNormal; easing.type: Easing.OutCubic } }
+                            Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutBack; easing.overshoot: 1.16 } }
+
+                            Timer {
+                                interval: Math.min(windowTile.index, 8) * Theme.Tokens.animationStagger
+                                running: true
+                                onTriggered: windowTile.introduced = true
+                            }
 
                             Rectangle {
                                 anchors.fill: parent
                                 radius: Theme.Tokens.radiusSmall
                                 color: windowTile.modelData.focused ? Theme.Tokens.surfaceRaised : (tileHover.containsMouse ? Theme.Tokens.surfaceRaised : "transparent")
-                                border.width: windowTile.modelData.focused ? 1 : 0
+                                border.width: windowTile.modelData.focused ? 1 : (tileHover.containsMouse ? 1 : 0)
                                 border.color: Theme.Tokens.accent
+                                Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
+                                Behavior on border.color { ColorAnimation { duration: Theme.Tokens.animationHover } }
+                                Behavior on border.width { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                             }
 
                             IconImage {
                                 id: appIcon
                                 anchors.centerIn: parent
-                                width: 30
-                                height: 30
-                                implicitSize: 30
+                                width: tileHover.containsMouse ? 34 : 30
+                                height: tileHover.containsMouse ? 34 : 30
+                                implicitSize: 34
                                 source: dock.iconSource(windowTile.modelData.icon)
                                 visible: status === Image.Ready
+                                Behavior on width { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
+                                Behavior on height { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                             }
 
                             Text {
@@ -178,6 +202,21 @@ Item {
                                 color: Theme.Tokens.accent
                                 font.pixelSize: 20
                                 font.bold: true
+                                scale: tileHover.containsMouse ? 1.12 : 1
+                                Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutBack; easing.overshoot: 1.12 } }
+                            }
+
+                            Rectangle {
+                                width: windowTile.modelData.focused ? 18 : 8
+                                height: 2
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 1
+                                radius: 1
+                                color: Theme.Tokens.accent
+                                opacity: windowTile.modelData.focused ? 1 : (tileHover.containsMouse ? 0.55 : 0)
+                                Behavior on width { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
+                                Behavior on opacity { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                             }
 
                             MouseArea {
@@ -193,7 +232,10 @@ Item {
 
                             Button {
                                 id: minimizeButton
-                                visible: tileHover.containsMouse || windowTile.modelData.minimized
+                                visible: true
+                                enabled: windowTile.actionsShown
+                                opacity: windowTile.actionsShown ? 1 : 0
+                                scale: windowTile.actionsShown ? 1 : 0.72
                                 width: 18
                                 height: 18
                                 anchors.top: parent.top
@@ -202,6 +244,8 @@ Item {
                                 padding: 0
                                 text: windowTile.modelData.minimized ? "↗" : "−"
                                 Accessible.name: windowTile.modelData.minimized ? "Restore window" : "Minimize window"
+                                Behavior on opacity { NumberAnimation { duration: Theme.Tokens.animationFast; easing.type: Easing.OutCubic } }
+                                Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutBack; easing.overshoot: 1.12 } }
                                 background: Rectangle { radius: 1; color: minimizeButton.down ? Theme.Tokens.accent : Theme.Tokens.surfaceRaised; border.width: 1; border.color: Theme.Tokens.separator }
                                 contentItem: Text { text: minimizeButton.text; color: minimizeButton.down ? Theme.Tokens.background : Theme.Tokens.textPrimary; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: dock.minimizeWindow(windowTile.modelData)
@@ -209,7 +253,10 @@ Item {
 
                             Button {
                                 id: closeButton
-                                visible: dock.showCloseButtons && tileHover.containsMouse
+                                visible: dock.showCloseButtons
+                                enabled: dock.showCloseButtons && windowTile.actionsShown
+                                opacity: windowTile.actionsShown ? 1 : 0
+                                scale: windowTile.actionsShown ? 1 : 0.72
                                 width: 18
                                 height: 18
                                 anchors.bottom: parent.bottom
@@ -218,6 +265,8 @@ Item {
                                 padding: 0
                                 text: "×"
                                 Accessible.name: "Close window"
+                                Behavior on opacity { NumberAnimation { duration: Theme.Tokens.animationFast; easing.type: Easing.OutCubic } }
+                                Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutBack; easing.overshoot: 1.12 } }
                                 background: Rectangle { radius: 1; color: closeButton.down ? Theme.Tokens.danger : Theme.Tokens.surfaceRaised; border.width: 1; border.color: Theme.Tokens.separator }
                                 contentItem: Text { text: closeButton.text; color: closeButton.down ? Theme.Tokens.background : Theme.Tokens.textPrimary; font.pixelSize: 15; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: dock.closeWindow(windowTile.modelData)

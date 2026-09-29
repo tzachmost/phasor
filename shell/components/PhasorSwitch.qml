@@ -19,6 +19,8 @@ Switch {
         color: control.checked ? Theme.Tokens.accent : Theme.Tokens.surfaceRaised
         border.width: 1
         border.color: control.checked ? Theme.Tokens.accent : Theme.Tokens.separator
+        Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
+        Behavior on border.color { ColorAnimation { duration: Theme.Tokens.animationHover } }
 
         Rectangle {
             width: 16
@@ -27,7 +29,8 @@ Switch {
             y: (parent.height - height) / 2
             radius: height / 2
             color: Theme.Tokens.background
-            Behavior on x { NumberAnimation { duration: Theme.Tokens.animationFast } }
+            Behavior on x { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
         }
     }
 

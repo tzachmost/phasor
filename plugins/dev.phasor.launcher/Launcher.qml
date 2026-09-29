@@ -13,6 +13,7 @@ Item {
     height: 1
     property var phasor
     property bool open: false
+    property bool closing: false
     property string query: ""
     property int selectedIndex: 0
     property var results: []
@@ -138,6 +139,8 @@ Item {
 
     onOpenChanged: {
         if (open) {
+            closing = false
+            closeAnimationTimer.stop()
             query = ""
             showingActions = false
             renamingFile = false
@@ -147,7 +150,17 @@ Item {
             loadSpaces()
             inputFocusTimer.restart()
             Qt.callLater(function() { searchInput.forceActiveFocus() })
+        } else {
+            closing = true
+            closeAnimationTimer.restart()
         }
+    }
+
+    Timer {
+        id: closeAnimationTimer
+        interval: Theme.Tokens.animationExit
+        repeat: false
+        onTriggered: launcher.closing = false
     }
 
     Timer {
@@ -180,7 +193,7 @@ Item {
     PanelWindow {
         id: overlay
         anchors { top: true; bottom: true; left: true; right: true }
-        visible: launcher.open
+        visible: launcher.open || launcher.closing
         focusable: launcher.open
         exclusiveZone: 0
         color: "transparent"
@@ -193,7 +206,7 @@ Item {
             anchors.fill: parent
             color: Theme.Tokens.overlayScrim
             opacity: launcher.open ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: Theme.Tokens.animationFast } }
+            Behavior on opacity { NumberAnimation { duration: launcher.open ? Theme.Tokens.animationNormal : Theme.Tokens.animationExit; easing.type: launcher.open ? Easing.OutCubic : Easing.InCubic } }
             MouseArea { anchors.fill: parent; onClicked: launcher.open = false }
         }
 
@@ -202,10 +215,15 @@ Item {
             width: Math.min(680, parent.width - 40)
             height: Math.min(640, parent.height - 64)
             anchors.centerIn: parent
+            opacity: launcher.open ? 1 : 0
+            scale: launcher.open ? 1 : 0.975
+            transformOrigin: Item.Center
             radius: Theme.Tokens.radiusLarge
             color: Theme.Tokens.surface
             border.width: 1
             border.color: Theme.Tokens.borderFocused
+            Behavior on opacity { NumberAnimation { duration: launcher.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: launcher.open ? Easing.OutCubic : Easing.InCubic } }
+            Behavior on scale { NumberAnimation { duration: launcher.open ? Theme.Tokens.animationEnter : Theme.Tokens.animationExit; easing.type: launcher.open ? Easing.OutCubic : Easing.InCubic } }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -310,14 +328,20 @@ Item {
                     model: launcher.results
                     currentIndex: launcher.selectedIndex
                     spacing: Theme.Tokens.spacingXS
+                    add: Transition { NumberAnimation { properties: "opacity,scale"; from: 0; to: 1; duration: Theme.Tokens.animationNormal; easing.type: Easing.OutCubic } }
+                    remove: Transition { NumberAnimation { properties: "opacity,scale"; to: 0; duration: Theme.Tokens.animationExit; easing.type: Easing.InCubic } }
+                    displaced: Transition { NumberAnimation { properties: "y"; duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
                     visible: launcher.query.trim().length > 0 && !launcher.showingActions
                     delegate: Rectangle {
                         required property int index
                         required property var modelData
                         width: resultList.width
                         height: 58
+                        scale: index === launcher.selectedIndex ? 1.012 : 1
+                        Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                         radius: Theme.Tokens.radiusSmall
                         color: index === launcher.selectedIndex ? Theme.Tokens.surfaceRaised : "transparent"
+                        Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: Theme.Tokens.spacingM
@@ -366,13 +390,19 @@ Item {
                     currentIndex: launcher.selectedIndex
                     cellWidth: Math.floor(width / Math.max(1, Math.floor(width / 132)))
                     cellHeight: 88
+                    add: Transition { NumberAnimation { properties: "opacity,scale"; from: 0; to: 1; duration: Theme.Tokens.animationNormal; easing.type: Easing.OutCubic } }
+                    remove: Transition { NumberAnimation { properties: "opacity,scale"; to: 0; duration: Theme.Tokens.animationExit; easing.type: Easing.InCubic } }
+                    displaced: Transition { NumberAnimation { properties: "x,y"; duration: Theme.Tokens.animationLayout; easing.type: Easing.OutCubic } }
                     delegate: Rectangle {
                         required property int index
                         required property var modelData
                         width: gridResults.cellWidth - 8
                         height: gridResults.cellHeight - 8
+                        scale: index === launcher.selectedIndex ? 1.035 : 1
+                        Behavior on scale { NumberAnimation { duration: Theme.Tokens.animationHover; easing.type: Easing.OutCubic } }
                         radius: Theme.Tokens.radiusSmall
                         color: index === launcher.selectedIndex ? Theme.Tokens.surfaceRaised : "transparent"
+                        Behavior on color { ColorAnimation { duration: Theme.Tokens.animationHover } }
                         Column {
                             anchors.fill: parent
                             anchors.margins: 8
