@@ -13,7 +13,7 @@ def socket_path() -> str:
     return str(runtime_home() / "phasor.sock")
 
 
-def request(method: str, params: dict[str, Any] | None = None, timeout: float = 3.0) -> Any:
+def request(method: str, params: dict[str, Any] | None = None, timeout: float = 5.0) -> Any:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:

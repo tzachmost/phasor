@@ -1,0 +1,15 @@
+{
+  "id": "dev.phasor.clipboard",
+  "name": "Phasor Clipboard History",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Clipboard.qml",
+  "categories": ["status-item", "clipboard"],
+  "capabilities": ["clipboard.read", "clipboard.write"],
+  "permissions": [],
+  "supportedSlots": ["bar.right"],
+  "contributions": [
+    { "slot": "bar.right", "entrypoint": "ClipboardSlot.qml" }
+  ],
+  "builtin": true
+}

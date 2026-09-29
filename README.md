@@ -1,6 +1,6 @@
 # Phasor Shell
 
-Phasor Shell is a portable desktop shell for MangoWM, built with Quickshell and QML. The v0.1 source tree is designed for first validation on a fresh CachyOS/Arch installation; it does not target or depend on the bootstrap distribution.
+Phasor Shell is a portable desktop shell for MangoWM, built with Quickshell and QML. The first production target is CachyOS/Arch; the source and core service APIs remain distribution independent.
 
 Phasor keeps compositor and system integration behind `phasor-core` services. Its first-party UI is loaded through the same versioned plugin host intended for third-party components.
 
@@ -29,14 +29,14 @@ cd ~/Work/phasor && git pull && ./scripts/install-dev && sudo ./scripts/install-
 - `core/`: Python service registry, Mango adapter, app/file search, plugin policy, and local IPC.
 - `config/`: default user settings and Mango bindings.
 - `session/`: Wayland session entry and supervisor.
-- `scripts/`: development/system install, dependency helper, diagnostics, run, and uninstall.
-- `package/arch/`: Arch package recipe.
+- `scripts/`: development/system install, dependency helper, diagnostics, source/RPM builders, run, and uninstall.
+- `package/`: Arch, Fedora/RPM, and NixOS package definitions.
 - `docs/`: architecture, UI, shortcuts, plugin API, and roadmap.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/roadmap.md) for implementation details. User settings live in `~/.config/phasor/`, persistent data in `~/.local/share/phasor/`, and caches in `~/.cache/phasor/`.
 
-For a new work session, start with [docs/handoff.md](docs/handoff.md) for the current state, completed work, validation limits, and suggested next steps.
+For other installation paths and update/removal instructions, see [docs/install.md](docs/install.md). For a new work session, start with [docs/handoff.md](docs/handoff.md) for the current state, completed work, validation limits, and suggested next steps.
 
-## Current scope
+## Release status
 
-v0.1 establishes the Phasor session, wallpaper, the service boundary, Mango spaces/windows operations, an app/file launcher plugin, diagnostics, and plugin discovery/lifecycle. The core exposes Space state and controls, though an in-shell Space indicator is still planned. File actions currently cover open, reveal, and copy path; rename, delete, share, and copy-file actions are not implemented. MangoWM and Quickshell must be installed on the target system. Full session validation is reserved for a fresh CachyOS install.
+Phasor 1.0.0 is the current release candidate. The tree includes the Phasor session, validated settings, Mango Space and window controls, a top Bar with clock and tray support, an optional bottom Dock, notification and Do Not Disturb controls, clipboard history, screenshot capture, the Desktop shortcuts, the app and file Launcher, and diagnostics. Arch/CachyOS, Fedora/Universal Blue, and NixOS install adapters are included. See the [1.0 checklist](docs/roadmap.md) for release status. The Preview document app is planned after the shell reaches 1.0.

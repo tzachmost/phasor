@@ -8,6 +8,7 @@ RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/phasor-$(id -u)}"
 PHASOR_RUNTIME="$RUNTIME_DIR/phasor"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/phasor"
 LOG_FILE="$STATE_DIR/session.log"
+WAYLAND_DISPLAY_FILE="$PHASOR_RUNTIME/wayland-display"
 mkdir -p "$PHASOR_RUNTIME" "$STATE_DIR"
 chmod 700 "$PHASOR_RUNTIME" "$STATE_DIR" 2>/dev/null || true
 
@@ -20,6 +21,12 @@ if [[ "${1:-}" == "--capture-mango-env" ]]; then
     printf '%s\n' "$MANGO_INSTANCE_SIGNATURE" > "$tmp"
     chmod 600 "$tmp"
     mv -f -- "$tmp" "$PHASOR_RUNTIME/mango-instance"
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        tmp="$PHASOR_RUNTIME/wayland-display.tmp"
+        printf '%s\n' "$WAYLAND_DISPLAY" > "$tmp"
+        chmod 600 "$tmp"
+        mv -f -- "$tmp" "$WAYLAND_DISPLAY_FILE"
+    fi
     exit 0
 fi
 
@@ -34,7 +41,7 @@ done
 
 MANGO_CONFIG="${PHASOR_MANGO_CONFIG:-$PHASOR_HOME/config/mango/config.conf}"
 if [[ ! -r "$MANGO_CONFIG" ]]; then printf 'Mango config is not readable: %s\n' "$MANGO_CONFIG"; exit 1; fi
-rm -f -- "$PHASOR_RUNTIME/mango-instance" "$PHASOR_RUNTIME/mango-instance.tmp"
+rm -f -- "$PHASOR_RUNTIME/mango-instance" "$PHASOR_RUNTIME/mango-instance.tmp" "$WAYLAND_DISPLAY_FILE" "$PHASOR_RUNTIME/wayland-display.tmp"
 
 mango -c "$MANGO_CONFIG" &
 MANGO_PID=$!
@@ -43,23 +50,21 @@ QS_PID=
 SWAYNC_PID=
 CLIPHIST_PID=
 POLKIT_PID=
-SWAYBG_PID=
 cleanup() {
     [[ -z "$QS_PID" ]] || kill "$QS_PID" 2>/dev/null || true
     [[ -z "$SWAYNC_PID" ]] || kill "$SWAYNC_PID" 2>/dev/null || true
     [[ -z "$CLIPHIST_PID" ]] || kill "$CLIPHIST_PID" 2>/dev/null || true
     [[ -z "$POLKIT_PID" ]] || kill "$POLKIT_PID" 2>/dev/null || true
-    [[ -z "$SWAYBG_PID" ]] || kill "$SWAYBG_PID" 2>/dev/null || true
     [[ -z "$CORE_PID" ]] || kill "$CORE_PID" 2>/dev/null || true
     [[ -z "$MANGO_PID" ]] || kill "$MANGO_PID" 2>/dev/null || true
     [[ -z "$QS_PID" ]] || wait "$QS_PID" 2>/dev/null || true
     [[ -z "$SWAYNC_PID" ]] || wait "$SWAYNC_PID" 2>/dev/null || true
     [[ -z "$CLIPHIST_PID" ]] || wait "$CLIPHIST_PID" 2>/dev/null || true
     [[ -z "$POLKIT_PID" ]] || wait "$POLKIT_PID" 2>/dev/null || true
-    [[ -z "$SWAYBG_PID" ]] || wait "$SWAYBG_PID" 2>/dev/null || true
     [[ -z "$CORE_PID" ]] || wait "$CORE_PID" 2>/dev/null || true
     [[ -z "$MANGO_PID" ]] || wait "$MANGO_PID" 2>/dev/null || true
     rm -f -- "$PHASOR_RUNTIME/mango-instance" "$PHASOR_RUNTIME/mango-instance.tmp"
+    rm -f -- "$WAYLAND_DISPLAY_FILE" "$PHASOR_RUNTIME/wayland-display.tmp"
 }
 is_running() {
     local state
@@ -72,6 +77,7 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 SIGNATURE=
+WAYLAND_SOCKET=
 for ((attempt=0; attempt<120; attempt++)); do
     if ! is_running "$MANGO_PID"; then
         wait "$MANGO_PID"; status=$?
@@ -80,12 +86,26 @@ for ((attempt=0; attempt<120; attempt++)); do
     fi
     if [[ -s "$PHASOR_RUNTIME/mango-instance" ]]; then
         IFS= read -r SIGNATURE < "$PHASOR_RUNTIME/mango-instance" || true
-        if [[ -n "$SIGNATURE" ]] && MANGO_INSTANCE_SIGNATURE="$SIGNATURE" mmsg get version >/dev/null 2>&1; then break; fi
+        if [[ -s "$WAYLAND_DISPLAY_FILE" ]]; then
+            IFS= read -r WAYLAND_DISPLAY < "$WAYLAND_DISPLAY_FILE" || true
+        elif [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+            for candidate in "$RUNTIME_DIR"/wayland-*; do
+                if [[ -S "$candidate" ]]; then
+                    WAYLAND_DISPLAY="${candidate##*/}"
+                    break
+                fi
+            done
+        fi
+        if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+            export WAYLAND_DISPLAY
+            if [[ "$WAYLAND_DISPLAY" == /* ]]; then WAYLAND_SOCKET="$WAYLAND_DISPLAY"; else WAYLAND_SOCKET="$RUNTIME_DIR/$WAYLAND_DISPLAY"; fi
+        fi
+        if [[ -n "$SIGNATURE" && -S "$WAYLAND_SOCKET" ]] && MANGO_INSTANCE_SIGNATURE="$SIGNATURE" mmsg get version >/dev/null 2>&1; then break; fi
     fi
     sleep 0.25
 done
-if [[ -z "$SIGNATURE" ]] || ! MANGO_INSTANCE_SIGNATURE="$SIGNATURE" mmsg get version >/dev/null 2>&1; then
-    printf 'Mango IPC did not become ready or its environment was not captured. See Mango logs.\n'
+if [[ -z "$SIGNATURE" || -z "$WAYLAND_SOCKET" ]] || ! MANGO_INSTANCE_SIGNATURE="$SIGNATURE" mmsg get version >/dev/null 2>&1; then
+    printf 'Mango IPC or its Wayland socket did not become ready. See Mango logs.\n'
     exit 1
 fi
 export MANGO_INSTANCE_SIGNATURE="$SIGNATURE"
@@ -99,22 +119,15 @@ for ((attempt=0; attempt<40; attempt++)); do
 done
 if ! phasorctl ping >/dev/null 2>&1; then printf 'Phasor core did not start.\n'; exit 1; fi
 
-wallpaper="$(phasorctl rpc theme.get | python3 -c 'import json,sys; print(json.load(sys.stdin).get("wallpaper", ""))')"
-if [[ -n "$wallpaper" && -r "$wallpaper" ]]; then
-    swaybg -i "$wallpaper" -m fill &
-elif [[ -n "$wallpaper" ]]; then
-    printf 'Configured wallpaper is unreadable; using the Phasor background color.\n'
-    swaybg -c '#111318' &
-else
-    swaybg -c '#111318' &
+if ! phasorctl rpc wallpaper.apply; then
+    printf 'Could not start the Phasor background renderer.\n'
 fi
-SWAYBG_PID=$!
 
 if command -v swaync >/dev/null 2>&1; then
     swaync &
     SWAYNC_PID=$!
 else
-    printf 'Optional notification daemon swaync is not installed.\n'
+    printf 'Notification daemon swaync is not installed; the Bar notification controls will be unavailable.\n'
 fi
 POLKIT_AGENT=/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
 if [[ -x "$POLKIT_AGENT" ]]; then
@@ -130,7 +143,7 @@ if command -v wl-paste >/dev/null 2>&1 && command -v cliphist >/dev/null 2>&1; t
     wl-paste --watch cliphist store &
     CLIPHIST_PID=$!
 else
-    printf 'Optional clipboard history needs both wl-paste and cliphist.\n'
+    printf 'Clipboard history needs both wl-paste and cliphist.\n'
 fi
 
 restart_count=0

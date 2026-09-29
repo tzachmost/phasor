@@ -58,7 +58,11 @@ def main() -> int:
     }
     for label, executable in checks.items():
         path = shutil.which(executable)
-        mandatory = label in {"MangoWM", "Mango IPC", "Quickshell", "Python 3", "Background service"}
+        mandatory = label in {
+            "MangoWM", "Mango IPC", "Quickshell", "Python 3", "Wayland clipboard",
+            "Notification backend", "Clipboard history", "Screenshot tool", "Background service",
+            "Notification controls",
+        }
         report.add("PASS" if path else ("FAIL" if mandatory else "WARN"), label, path or f"{executable} is not installed")
 
     try:

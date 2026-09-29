@@ -7,6 +7,10 @@ if (( EUID == 0 )); then
     exit 1
 fi
 
+if [[ -e /run/ostree-booted ]]; then
+    exec "$ROOT/scripts/install-ublue" "$@"
+fi
+
 "$ROOT/scripts/install-deps"
 "$ROOT/scripts/install-dev"
 sudo "$ROOT/scripts/install-system"

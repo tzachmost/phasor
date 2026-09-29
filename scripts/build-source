@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+VERSION="$(python3 -c 'import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text())["project"]["version"])' "$ROOT/pyproject.toml")"
+OUTPUT="${1:-$ROOT/dist/phasor-$VERSION.tar.gz}"
+export LC_ALL=C
+mkdir -p "$(dirname "$OUTPUT")"
+
+tar \
+  --sort=name \
+  --mtime="@${SOURCE_DATE_EPOCH:-0}" \
+  --owner=0 --group=0 --numeric-owner \
+  --exclude='*/__pycache__' \
+  --exclude='*.pyc' --exclude='*.pyo' \
+  --exclude='*.egg-info' \
+  --transform="s,^,phasor-$VERSION/," \
+  -cf - -C "$ROOT" \
+  README.md AGENTS.md LICENSE pyproject.toml flake.nix flake.lock \
+  core config session scripts shell plugins docs package/nix package/fedora/phasor-shell.spec \
+  | gzip -n -9 > "$OUTPUT"
+
+printf 'Built %s\n' "$OUTPUT"
+sha256sum "$OUTPUT"

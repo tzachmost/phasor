@@ -6,6 +6,10 @@ if [[ "${1:-}" == "--system" ]]; then SYSTEM=1; fi
 
 if (( SYSTEM )); then
     if (( EUID != 0 )); then printf 'Run --system uninstall as root.\n' >&2; exit 1; fi
+    if [[ -e /run/ostree-booted ]]; then
+        printf 'This Phasor RPM is managed by rpm-ostree. Run: rpm-ostree uninstall phasor-shell\n' >&2
+        exit 1
+    fi
     DEST=/usr/share/phasor
     if [[ ! -f "$DEST/.phasor-managed" || -L "$DEST/.phasor-managed" || ! -f "$DEST/.phasor-owned-files" || -L "$DEST/.phasor-owned-files" ]]; then
         printf 'Refusing to remove an unmanaged or untracked system directory at %s.\n' "$DEST" >&2

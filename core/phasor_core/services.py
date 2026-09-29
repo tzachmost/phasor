@@ -14,6 +14,8 @@ from .system import SystemService
 
 
 METHOD_CAPABILITIES = {
+    "launcher.toggle": "apps.read",
+    "settings.toggle": "settings.control",
     "apps.search": "apps.read",
     "apps.launch": "apps.launch",
     "apps.favorite": "apps.favorites",
@@ -22,6 +24,10 @@ METHOD_CAPABILITIES = {
     "files.open": "files.open",
     "files.reveal": "files.reveal",
     "files.copy_path": "clipboard.write",
+    "files.rename": "files.rename",
+    "files.trash": "files.trash",
+    "files.copy": "files.copy",
+    "files.share": "clipboard.write",
     "spaces.list": "spaces.read",
     "spaces.switch": "spaces.control",
     "spaces.move_window": "spaces.control",
@@ -36,10 +42,14 @@ METHOD_CAPABILITIES = {
     "windows.fullscreen": "windows.control",
     "windows.minimize": "windows.control",
     "clipboard.history": "clipboard.read",
+    "clipboard.toggle": "clipboard.read",
     "clipboard.copy": "clipboard.write",
+    "clipboard.restore": "clipboard.write",
     "media.status": "media.read",
     "media.command": "media.control",
     "theme.get": "theme.read",
+    "settings.get": "settings.read",
+    "settings.update": "settings.control",
     "audio.status": "audio.read",
     "audio.get_volume": "audio.read",
     "audio.set_volume": "audio.control",
@@ -107,6 +117,49 @@ class Services:
         if method == "launcher.toggle":
             self.publish({"type": "action", "name": "launcher.toggle", "data": {}})
             return {"toggled": True}
+        if method == "settings.toggle":
+            self.publish({"type": "action", "name": "settings.toggle", "data": {}})
+            return {"toggled": True}
+        if method == "clipboard.toggle":
+            self.publish({"type": "action", "name": "clipboard.toggle", "data": {}})
+            return {"toggled": True}
+        if method == "settings.get":
+            from .config import load_settings
+            return load_settings()
+        if method == "settings.update":
+            from .config import load_settings, merge, save_settings
+            patch = params.get("patch", params)
+            if not isinstance(patch, dict):
+                raise ValueError("settings patch must be a JSON object")
+            previous = load_settings()
+            updated = merge(previous, patch)
+            save_settings(updated)
+            result = load_settings()
+            event_data = {"keys": sorted(patch)}
+            plugins_patch = patch.get("plugins")
+            if isinstance(plugins_patch, dict):
+                previous_plugins = previous.get("plugins", {})
+                for plugin_id, preference in plugins_patch.items():
+                    if not isinstance(preference, dict) or "enabled" not in preference:
+                        continue
+                    prior = previous_plugins.get(plugin_id, {})
+                    was_enabled = prior.get("enabled") if isinstance(prior, dict) else None
+                    is_enabled = preference["enabled"]
+                    if was_enabled is not None and was_enabled != is_enabled:
+                        self.publish({
+                            "type": "plugin.enabled" if is_enabled else "plugin.disabled",
+                            "name": plugin_id,
+                            "data": {"id": plugin_id, "enabled": is_enabled},
+                        })
+            appearance_patch = patch.get("appearance")
+            if isinstance(appearance_patch, dict) and {"theme", "wallpaper"}.intersection(appearance_patch):
+                theme = load_theme()
+                try:
+                    event_data["wallpaper"] = self.system.apply_wallpaper(theme["wallpaper"], theme["background"])
+                except RuntimeError as exc:
+                    event_data["wallpaper"] = {"error": str(exc)}
+            self.publish({"type": "event", "name": "settings.changed", "data": event_data})
+            return result
         if method == "plugins.list":
             return self.plugins.list()
         if method == "plugins.enable":
@@ -161,6 +214,14 @@ class Services:
             return self.files.reveal(str(params["path"]))
         if method == "files.copy_path":
             return self.clipboard.copy(str(params["path"]))
+        if method == "files.rename":
+            return self.files.rename(str(params["path"]), str(params.get("name", "")))
+        if method == "files.trash":
+            return self.files.trash(str(params["path"]))
+        if method == "files.copy":
+            return self.files.copy_file(str(params["path"]))
+        if method == "files.share":
+            return self.files.share(str(params["path"]))
         if method == "spaces.list":
             return {"items": self.snapshot().get("spaces", [])}
         if method == "spaces.switch":
@@ -199,6 +260,8 @@ class Services:
             return self.clipboard.history(limit)
         if method == "clipboard.copy":
             return self.clipboard.copy(str(params.get("text", "")))
+        if method == "clipboard.restore":
+            return self.clipboard.restore(str(params.get("id", "")))
         if method == "media.status":
             command = shutil.which("playerctl")
             if not command:
@@ -217,6 +280,9 @@ class Services:
             return {"ok": True, "action": action}
         if method == "theme.get":
             return load_theme()
+        if method == "wallpaper.apply":
+            theme = load_theme()
+            return self.system.apply_wallpaper(theme["wallpaper"], theme["background"])
         if method in {"audio.status", "audio.get_volume"}:
             return self.system.audio_status()
         if method == "audio.set_volume":
@@ -245,18 +311,22 @@ class Services:
             return self.system.screenshot_capture(params.get("copyToClipboard", False))
         raise ValueError(f"Unknown service method: {method}")
 
+    def close(self) -> None:
+        self.system.close()
+
 
 def load_theme() -> dict[str, Any]:
     from .config import load_settings
     from pathlib import Path
     settings = load_settings().get("appearance", {})
     wallpaper = str(settings.get("wallpaper", "")).strip()
+    theme = settings.get("theme", "dark")
     if wallpaper:
         path = Path(wallpaper).expanduser()
         if not path.is_absolute():
             path = Path.home() / path
         wallpaper = str(path)
-    return {"theme": settings.get("theme", "dark"), "accent": settings.get("accent", "#8bd5ca"), "reducedMotion": bool(settings.get("reducedMotion", False)), "wallpaper": wallpaper}
+    return {"theme": theme, "accent": settings.get("accent", "#8bd5ca"), "reducedMotion": bool(settings.get("reducedMotion", False)), "wallpaper": wallpaper, "background": "#f3f5f8" if theme == "light" else "#111318"}
 
 
 def _boolean(value: Any, name: str) -> bool:

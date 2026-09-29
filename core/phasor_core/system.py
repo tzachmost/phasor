@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 
@@ -14,6 +15,54 @@ class SystemService:
     Every external command is invoked with an argv array. Status methods report
     missing backends as unavailable; control methods return actionable errors.
     """
+
+    def __init__(self) -> None:
+        self._wallpaper_process: subprocess.Popen[bytes] | None = None
+
+    def apply_wallpaper(self, path: str, background: str = "#111318") -> dict[str, Any]:
+        executable = shutil.which("swaybg")
+        if not executable:
+            raise RuntimeError("swaybg is not installed")
+        error = None
+        args: list[str]
+        if path:
+            target = Path(path).expanduser()
+            if target.is_file() and target.resolve().is_absolute():
+                args = ["-i", str(target.resolve()), "-m", "fill"]
+            else:
+                error = f"Wallpaper is unreadable: {path}; using the Phasor background color"
+                args = ["-c", background]
+        else:
+            args = ["-c", background]
+        if self._wallpaper_process and self._wallpaper_process.poll() is None:
+            self._wallpaper_process.terminate()
+            try:
+                self._wallpaper_process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self._wallpaper_process.kill()
+                self._wallpaper_process.wait(timeout=1)
+        try:
+            self._wallpaper_process = subprocess.Popen(
+                [executable, *args],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self._wallpaper_process = None
+            raise RuntimeError(f"Could not start swaybg: {exc}") from exc
+        return {"started": True, "pid": self._wallpaper_process.pid, "wallpaper": path or None, "error": error}
+
+    def close(self) -> None:
+        if not self._wallpaper_process or self._wallpaper_process.poll() is not None:
+            return
+        self._wallpaper_process.terminate()
+        try:
+            self._wallpaper_process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            self._wallpaper_process.kill()
+            self._wallpaper_process.wait(timeout=1)
 
     @staticmethod
     def _run(executable: str, *args: str, timeout: float = 3.0) -> subprocess.CompletedProcess[str]:

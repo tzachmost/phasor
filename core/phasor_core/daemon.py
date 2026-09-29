@@ -137,6 +137,7 @@ def main() -> int:
         server.serve_forever(poll_interval=0.25)
     finally:
         stopping.set()
+        services.close()
         server.server_close()
         try:
             path.unlink(missing_ok=True)

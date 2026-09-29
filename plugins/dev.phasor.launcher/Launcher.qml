@@ -15,11 +15,52 @@ Item {
     property string query: ""
     property int selectedIndex: 0
     property var results: []
+    property var spaceItems: []
     property bool showingActions: false
     property var selectedItem: null
     property bool indexing: false
+    property bool renamingFile: false
+    property bool confirmingTrash: false
+    property string proposedName: ""
     property string errorText: ""
     property string infoText: ""
+
+    function loadSpaces() {
+        if (!phasor) return
+        phasor.request("spaces.list", {}, function(result) {
+            if (result.error) {
+                spaceItems = []
+                return
+            }
+            spaceItems = result.items || []
+        })
+    }
+
+    function switchSpace(space) {
+        phasor.request("spaces.switch", { id: space.id }, function(result) {
+            if (result.error) errorText = result.error
+            else loadSpaces()
+        })
+    }
+
+    function applyFileAction(method, params) {
+        phasor.request(method, params, function(result) {
+            if (result.error) {
+                errorText = result.error
+                return
+            }
+            if (method === "files.share") {
+                infoText = "File link copied to the clipboard"
+            } else if (method === "files.copy") {
+                search()
+                infoText = "Copy created: " + result.copied
+            } else {
+                showingActions = false
+                selectedItem = null
+                search()
+            }
+        })
+    }
 
     function search() {
         const text = query.trim()
@@ -83,6 +124,9 @@ Item {
     function openActions() {
         if (selectedIndex < 0 || selectedIndex >= results.length) return
         selectedItem = results[selectedIndex]
+        proposedName = selectedItem.name
+        renamingFile = false
+        confirmingTrash = false
         showingActions = true
     }
 
@@ -90,17 +134,25 @@ Item {
         if (open) {
             query = ""
             showingActions = false
+            renamingFile = false
+            confirmingTrash = false
             searchInput.text = ""
             search()
+            loadSpaces()
             Qt.callLater(function() { searchInput.forceActiveFocus() })
         }
     }
+
+    Component.onCompleted: loadSpaces()
 
     Connections {
         target: launcher.phasor
         function onEventReceived(event) {
             if (event.type === "action" && event.name === "launcher.toggle") launcher.open = !launcher.open
+            if (event.type === "snapshot") launcher.spaceItems = (event.data && event.data.spaces) || []
+            if (event.type === "event" && event.name === "space.changed") launcher.spaceItems = event.data || []
             if (event.type === "event" && event.name === "files.indexReady" && launcher.open && launcher.query.trim().length >= 2) launcher.search()
+            if (event.type === "event" && event.name === "files.changed" && launcher.open && launcher.query.trim().length >= 2) launcher.search()
         }
     }
 
@@ -124,7 +176,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            color: "#88080a0e"
+            color: Theme.Tokens.overlayScrim
             opacity: launcher.open ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.Tokens.animationFast } }
             MouseArea { anchors.fill: parent; onClicked: launcher.open = false }
@@ -133,7 +185,7 @@ Item {
         Rectangle {
             id: panel
             width: Math.min(680, parent.width - 40)
-            height: Math.min(600, parent.height - 64)
+            height: Math.min(640, parent.height - 64)
             anchors.centerIn: parent
             radius: Theme.Tokens.radiusLarge
             color: Theme.Tokens.surface
@@ -183,7 +235,55 @@ Item {
                     Text { text: "ESC"; color: Theme.Tokens.textSecondary; font.pixelSize: 11 }
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#343943" }
+                Flickable {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 34 : 0
+                    visible: launcher.spaceItems.length > 0
+                    contentWidth: spaceRow.implicitWidth
+                    contentHeight: height
+                    clip: true
+
+                    Row {
+                        id: spaceRow
+                        spacing: Theme.Tokens.spacingXS
+                        height: parent.height
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Spaces"
+                            color: Theme.Tokens.textSecondary
+                            font.pixelSize: 11
+                            rightPadding: Theme.Tokens.spacingS
+                        }
+
+                        Repeater {
+                            model: launcher.spaceItems
+                            delegate: Components.PhasorButton {
+                                required property var modelData
+                                text: modelData.id
+                                Accessible.name: modelData.name + (modelData.active ? ", active" : "")
+                                font.pixelSize: 12
+                                implicitWidth: 34
+                                implicitHeight: 30
+                                anchors.verticalCenter: parent.verticalCenter
+                                onClicked: launcher.switchSpace(modelData)
+                                background: Rectangle {
+                                    radius: Theme.Tokens.radiusSmall
+                                    color: modelData.active ? Theme.Tokens.accent : Theme.Tokens.surfaceRaised
+                                }
+                                contentItem: Text {
+                                    text: modelData.id
+                                    color: modelData.active ? Theme.Tokens.background : Theme.Tokens.textPrimary
+                                    font: parent.font
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.Tokens.separator }
 
                 ListView {
                     id: resultList
@@ -210,7 +310,7 @@ Item {
                                 Layout.preferredWidth: 34
                                 Layout.preferredHeight: 34
                                 radius: Theme.Tokens.radiusSmall
-                                color: modelData.kind === "app" ? "#30394a" : "#383244"
+                                color: modelData.kind === "app" ? Theme.Tokens.appIconSurface : Theme.Tokens.fileIconSurface
                                 Text { anchors.centerIn: parent; text: modelData.kind === "app" ? "A" : "↗"; color: Theme.Tokens.accent; font.pixelSize: 16; font.bold: true }
                             }
                             ColumnLayout {
@@ -256,7 +356,7 @@ Item {
                                 height: 38
                                 radius: Theme.Tokens.radiusSmall
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                color: "#30394a"
+                                color: Theme.Tokens.appIconSurface
                                 Text {
                                     anchors.centerIn: parent
                                     text: modelData.name.length ? modelData.name.charAt(0).toUpperCase() : "A"
@@ -291,7 +391,7 @@ Item {
                     Text { text: launcher.selectedItem ? launcher.selectedItem.name : "Actions"; color: Theme.Tokens.textPrimary; font.pixelSize: 17; font.bold: true }
                     Text { text: launcher.selectedItem ? launcher.selectedItem.detail : ""; color: Theme.Tokens.textSecondary; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
 
-                    Button {
+                    Components.PhasorButton {
                         visible: launcher.selectedItem && launcher.selectedItem.kind === "app"
                         text: launcher.selectedItem && launcher.selectedItem.favorite ? "Unpin from favorites" : "Pin to favorites"
                         onClicked: phasor.request("apps.favorite", { id: launcher.selectedItem.id, enabled: !launcher.selectedItem.favorite }, function(result) {
@@ -299,12 +399,12 @@ Item {
                             else { launcher.showingActions = false; launcher.search() }
                         })
                     }
-                    Button {
+                    Components.PhasorButton {
                         visible: launcher.selectedItem && launcher.selectedItem.kind === "app"
                         text: "App info"
                         onClicked: launcher.infoText = launcher.selectedItem.id + "\n" + launcher.selectedItem.detail
                     }
-                    Button {
+                    Components.PhasorButton {
                         visible: launcher.selectedItem && launcher.selectedItem.kind === "app"
                         text: "Open in Bazaar to manage or uninstall"
                         onClicked: phasor.request("apps.open_store", { id: launcher.selectedItem.id }, function(result) {
@@ -312,31 +412,89 @@ Item {
                             else launcher.showingActions = false
                         })
                     }
-                    Button {
-                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file"
+                    Components.PhasorButton {
+                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file" && !launcher.renamingFile && !launcher.confirmingTrash
                         text: "Open"
                         onClicked: phasor.request("files.open", { path: launcher.selectedItem.id }, function(result) {
                             if (result.error) launcher.errorText = result.error
                             else launcher.open = false
                         })
                     }
-                    Button {
-                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file"
+                    Components.PhasorButton {
+                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file" && !launcher.renamingFile && !launcher.confirmingTrash
                         text: "Reveal in Files"
                         onClicked: phasor.request("files.reveal", { path: launcher.selectedItem.id }, function(result) {
                             if (result.error) launcher.errorText = result.error
                             else launcher.showingActions = false
                         })
                     }
-                    Button {
-                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file"
+                    Components.PhasorButton {
+                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file" && !launcher.renamingFile && !launcher.confirmingTrash
                         text: "Copy path"
                         onClicked: phasor.request("files.copy_path", { path: launcher.selectedItem.id }, function(result) {
                             if (result.error) launcher.errorText = result.error
                             else launcher.showingActions = false
                         })
                     }
-                    Button { text: "Back"; onClicked: launcher.showingActions = false }
+                    Components.PhasorButton {
+                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file" && !launcher.renamingFile && !launcher.confirmingTrash
+                        text: "Share file link"
+                        onClicked: launcher.applyFileAction("files.share", { path: launcher.selectedItem.id })
+                    }
+                    Components.PhasorButton {
+                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file" && !launcher.selectedItem.directory && !launcher.renamingFile && !launcher.confirmingTrash
+                        text: "Copy file"
+                        onClicked: launcher.applyFileAction("files.copy", { path: launcher.selectedItem.id })
+                    }
+                    Components.PhasorButton {
+                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file" && !launcher.renamingFile && !launcher.confirmingTrash
+                        text: "Rename"
+                        onClicked: {
+                            launcher.proposedName = launcher.selectedItem.name
+                            launcher.renamingFile = true
+                            Qt.callLater(function() { renameInput.forceActiveFocus(); renameInput.selectAll() })
+                        }
+                    }
+                    Components.PhasorTextField {
+                        id: renameInput
+                        visible: launcher.renamingFile
+                        Layout.fillWidth: true
+                        text: launcher.proposedName
+                        selectByMouse: true
+                        onTextChanged: launcher.proposedName = text
+                    }
+                    Components.PhasorButton {
+                        visible: launcher.renamingFile
+                        text: "Save name"
+                        enabled: launcher.proposedName.trim().length > 0
+                        onClicked: launcher.applyFileAction("files.rename", { path: launcher.selectedItem.id, name: launcher.proposedName.trim() })
+                    }
+                    Components.PhasorButton {
+                        visible: launcher.selectedItem && launcher.selectedItem.kind === "file" && !launcher.renamingFile && !launcher.confirmingTrash
+                        text: "Move to Trash"
+                        onClicked: launcher.confirmingTrash = true
+                    }
+                    Text {
+                        visible: launcher.confirmingTrash
+                        text: launcher.selectedItem ? "Move “" + launcher.selectedItem.name + "” to Trash? You can restore it from your file manager." : ""
+                        color: Theme.Tokens.warning
+                        font.pixelSize: 12
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
+                    Components.PhasorButton {
+                        visible: launcher.confirmingTrash
+                        text: "Confirm Move to Trash"
+                        onClicked: launcher.applyFileAction("files.trash", { path: launcher.selectedItem.id })
+                    }
+                    Components.PhasorButton {
+                        text: launcher.renamingFile || launcher.confirmingTrash ? "Cancel" : "Back"
+                        onClicked: {
+                            if (launcher.renamingFile) launcher.renamingFile = false
+                            else if (launcher.confirmingTrash) launcher.confirmingTrash = false
+                            else launcher.showingActions = false
+                        }
+                    }
                     Item { Layout.fillHeight: true }
                 }
 

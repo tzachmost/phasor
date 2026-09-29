@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,6 +65,54 @@ class PluginManagerTests(unittest.TestCase):
                 plugins = {plugin["id"]: plugin for plugin in PluginManager().list()["plugins"]}
                 self.assertTrue(plugins["dev.example.high"]["loadable"])
                 self.assertFalse(plugins["dev.example.low"]["loadable"])
+
+    def test_identical_plugin_copies_are_ignored_without_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = write_plugin(root, "dev.example.builtin", builtin=True)
+            installed_root = root / "installed" / "plugins"
+            installed = installed_root / source.name
+            installed.parent.mkdir(parents=True)
+            shutil.copytree(source, installed)
+            env = {
+                "PHASOR_HOME": str(root),
+                "XDG_CONFIG_HOME": str(root / "config"),
+                "XDG_DATA_HOME": str(root / "data"),
+                "XDG_STATE_HOME": str(root / "state"),
+            }
+            with patch.dict(os.environ, env):
+                manager = PluginManager()
+                manager.dirs = [root / "plugins", installed_root]
+                plugins = manager.discover()
+
+            self.assertEqual([plugin["id"] for plugin in plugins], ["dev.example.builtin"])
+            self.assertEqual(manager.diagnostics, [])
+            self.assertEqual(plugins[0]["manifestPath"], str(source / "plugin.json"))
+
+    def test_conflicting_plugin_copies_keep_first_and_report_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = write_plugin(root, "dev.example.builtin", builtin=True)
+            installed_root = root / "installed" / "plugins"
+            installed = installed_root / source.name
+            installed.parent.mkdir(parents=True)
+            shutil.copytree(source, installed)
+            (installed / "Entry.qml").write_text("import QtQuick\nItem { objectName: \"different\" }\n", encoding="utf-8")
+            env = {
+                "PHASOR_HOME": str(root),
+                "XDG_CONFIG_HOME": str(root / "config"),
+                "XDG_DATA_HOME": str(root / "data"),
+                "XDG_STATE_HOME": str(root / "state"),
+            }
+            with patch.dict(os.environ, env):
+                manager = PluginManager()
+                manager.dirs = [root / "plugins", installed_root]
+                plugins = manager.discover()
+
+            self.assertEqual(len(plugins), 1)
+            self.assertEqual(plugins[0]["manifestPath"], str(source / "plugin.json"))
+            self.assertEqual(len(manager.diagnostics), 1)
+            self.assertIn("Conflicting plugin id dev.example.builtin", manager.diagnostics[0])
 
     def test_contribution_must_be_in_declared_slots(self):
         with tempfile.TemporaryDirectory() as directory:

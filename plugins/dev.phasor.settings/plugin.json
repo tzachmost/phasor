@@ -1,0 +1,22 @@
+{
+  "id": "dev.phasor.settings",
+  "name": "Phasor Settings",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Settings.qml",
+  "categories": ["surface", "settings"],
+  "capabilities": ["settings.read", "settings.control"],
+  "permissions": [],
+  "supportedSlots": [],
+  "contributions": [],
+  "builtin": true,
+  "surface": {
+    "anchor": "overlay",
+    "thickness": 0,
+    "reservesWorkArea": false,
+    "overlaysWindows": true,
+    "autoHide": false,
+    "priority": 90,
+    "slots": []
+  }
+}

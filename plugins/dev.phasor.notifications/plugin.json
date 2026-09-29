@@ -1,0 +1,15 @@
+{
+  "id": "dev.phasor.notifications",
+  "name": "Phasor Notifications",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Notifications.qml",
+  "categories": ["status-item", "notifications"],
+  "capabilities": ["notifications.read", "notifications.control"],
+  "permissions": [],
+  "supportedSlots": ["bar.right"],
+  "contributions": [
+    { "slot": "bar.right", "entrypoint": "NotificationSlot.qml" }
+  ],
+  "builtin": true
+}

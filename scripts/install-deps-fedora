@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ! -r /etc/os-release ]]; then
+    printf 'Cannot identify this Linux distribution.\n' >&2
+    exit 1
+fi
+. /etc/os-release
+if [[ "${ID:-}" != fedora || -e /run/ostree-booted ]]; then
+    printf 'This dependency helper is for mutable Fedora Workstation systems.\n' >&2
+    exit 1
+fi
+if (( EUID == 0 )); then
+    printf 'Run this helper as your regular user; it uses sudo for package installation.\n' >&2
+    exit 1
+fi
+if command -v dnf5 >/dev/null 2>&1; then
+    DNF=(dnf5)
+    DNF_PLUGINS=dnf5-plugins
+elif command -v dnf >/dev/null 2>&1; then
+    DNF=(dnf)
+    DNF_PLUGINS=dnf-plugins-core
+else
+    printf 'Neither dnf5 nor dnf was found.\n' >&2
+    exit 1
+fi
+
+# Mango is published through Terra and Quickshell provides its COPR repository.
+sudo "${DNF[@]}" install -y "$DNF_PLUGINS"
+sudo "${DNF[@]}" install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' -y terra-release
+sudo "${DNF[@]}" copr enable -y errornointernet/quickshell
+
+packages=(
+    mangowm quickshell python3 xdg-utils wl-clipboard glib2 swaybg
+    cliphist SwayNotificationCenter flameshot
+    playerctl brightnessctl pipewire-utils wireplumber NetworkManager bluez polkit-gnome git
+)
+sudo "${DNF[@]}" install -y "${packages[@]}"
+
+if ! command -v mango >/dev/null 2>&1 || ! command -v mmsg >/dev/null 2>&1; then
+    printf 'MangoWM installation finished without both mango and mmsg commands. Check the Terra package output.\n' >&2
+    exit 1
+fi
+if ! command -v quickshell >/dev/null 2>&1; then
+    printf 'Quickshell installation failed. Check the quickshell COPR package output.\n' >&2
+    exit 1
+fi

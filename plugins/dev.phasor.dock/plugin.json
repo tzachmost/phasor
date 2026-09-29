@@ -1,0 +1,22 @@
+{
+  "id": "dev.phasor.dock",
+  "name": "Phasor Dock",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Dock.qml",
+  "categories": ["surface", "dock", "window-list"],
+  "capabilities": ["windows.read", "windows.control"],
+  "permissions": [],
+  "supportedSlots": ["dock.left", "dock.center", "dock.right", "dock.status"],
+  "contributions": [],
+  "builtin": true,
+  "surface": {
+    "anchor": "bottom",
+    "thickness": 70,
+    "reservesWorkArea": true,
+    "overlaysWindows": false,
+    "autoHide": false,
+    "priority": 40,
+    "slots": ["dock.left", "dock.center", "dock.right", "dock.status"]
+  }
+}

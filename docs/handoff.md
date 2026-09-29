@@ -1,37 +1,30 @@
-# Development Handoff
+# Development handoff
 
-Use this page to resume Phasor work in a new coding session. The public repository is [github.com/tzachmost/phasor](https://github.com/tzachmost/phasor), on the `main` branch. Read this page together with [the roadmap](roadmap.md) and [the architecture](architecture.md).
+The active objective is a complete Phasor 1.0 release. Read this page with [the roadmap](roadmap.md), [architecture](architecture.md), and [the plugin API](plugin-api.md). The Preview document app is post-1.0 work and should begin after every 1.0 release check passes.
 
-## Current state
+## Current implementation
 
-The v0.1 foundation is implemented and pushed. It includes the MangoWM session supervisor, Quickshell plugin host and Launcher, Python core services over local IPC, Mango windows and Spaces integration, app discovery and launch, Home file search and basic file actions, system status/control adapters, diagnostics, install scripts, and an Arch package recipe. The one-command CachyOS/Arch setup is in the README.
+The v0.1 foundation and the Bar, Dock, Desktop, and service surfaces are implemented. The repo includes the Phasor session supervisor, Quickshell plugin host, validated core configuration and local service API, Mango Space/window controls, Launcher, full Home file actions, live theme/wallpaper settings, a top Bar, an optional window Dock, and Desktop shortcuts over the wallpaper. The Bar shows workspaces, clock, tray items, notification count, Do Not Disturb, clipboard history, screenshot capture, and Settings. The Dock can focus and close running windows; Settings can enable or disable the Desktop and Dock live. These surfaces can run together.
 
-The latest published implementation checkpoint is commit `dbfd629` (`chore(install): add one-command CachyOS setup`). Check `git status` and `git log` before continuing, since this handoff can outlive that checkpoint.
+Arch/CachyOS, Fedora, Universal Blue/OSTree, and NixOS install, update, diagnostics, and removal paths are documented. The versioned Arch recipe, Fedora RPM/SRPM, and NixOS flake package have built and passed artifact inspection. Isolated package transactions and a fresh CachyOS session run are complete. The remaining 1.0 gate is publishing from a reviewed, committed source snapshot. See [the roadmap](roadmap.md) for the source of truth.
 
-## Validation status
+## Latest validation
 
-- The 23 Python unit tests passed at the last implementation check.
-- Python compilation, shell syntax, JSON parsing, and `git diff --check` passed.
-- A mocked session supervisor completed startup and shutdown.
-- A headless Quickshell probe loaded the configuration, but the current environment has no Mango/Wayland compositor, so a live session was not verified.
-- The installer has not been run on a fresh CachyOS machine. Fresh CachyOS validation is still required before calling the desktop session validated.
+- All 48 Python unit tests passed. Python compilation and `git diff --check` passed after the plugin discovery fix.
+- `scripts/build-source` creates the versioned release archive with normalized timestamps, ownership, ordering, and gzip metadata. The stable Arch recipe checksum matches the archive.
+- An isolated headless Mango session loaded Quickshell, the Bar, Settings, Dock, and Desktop. It showed and removed the Dock at runtime, listed/focused/closed a test Alacritty window, displayed clipboard history, restored clipboard contents, and updated notification DND state.
+- The stable Arch recipe built from the versioned source archive, installed as 1.0.0, upgraded to a temporary 1.0.1 fixture, and removed cleanly in an isolated pacman root. Fedora's 1.0.0 RPM/SRPM built and the RPM installed and removed in a clean RPM database root. The Nix flake passed `nix flake check --no-build --all-systems`; its 1.0.0 profile package installed and removed cleanly. Earlier package transaction checks also covered version upgrades.
+- A fresh CachyOS VM booted from the official ISO and installed Phasor as a separate session. The Phasor login showed the Bar and Desktop; Settings changed Dock visibility live; Home opened Dolphin; Launcher searched apps and files and copied a file path into Clipboard history; Notifications and screenshot capture opened. `systemctl poweroff` completed and QEMU exited cleanly.
+- The fresh guest had an earlier installed core manager, so its doctor reported duplicate diagnostics for identical source and system plugin bundles. The current manager ignores identical bundles quietly and retains a diagnostic for differing contents; regression tests cover both cases. The host Phasor session was left running untouched.
+- Earlier source/system install and uninstall flows passed in temporary roots; DNF5 and OSTree adapter command paths passed simulations with mocked package tools.
 
-## Suggested next steps
+## Next work
 
-1. Validate on a fresh CachyOS/Arch desktop: follow the one-line setup in the README, select the Phasor login session, and record/fix any installation or startup failures. Do not treat the headless probe as a substitute for this.
-2. Add an in-shell Space indicator and switcher. The core Space API and Mango keyboard shortcuts already exist; see [the shell spec](shell-spec.md) and [shortcuts](shortcuts.md).
-3. Connect theme and reduced-motion settings to the existing QML theme tokens.
-4. Complete the file action menu with rename, delete, share, and copy-file actions. Update the docs and focused coverage as each action lands.
-5. Keep [the roadmap](roadmap.md) current as items are completed or reprioritized.
+1. Review and commit the prepared 1.0.0 source, publish the `v1.0.0` GitHub release with the source archive and RPM assets, and publish the Arch recipe metadata. This checkout still has local modified and untracked work; the environment has no authenticated GitHub session.
+2. Start the Preview application only after the 1.0 release checklist is complete.
 
-## Useful commands
+## Development notes
 
-From an existing development checkout:
-
-```bash
-git status --short
-git pull
-./scripts/doctor
-```
-
-For a fresh CachyOS/Arch install, use the single command in the README rather than this development-checkout sequence.
+- Use `~/Work/phasor` as the normal checkout and `./scripts/doctor` for installed-system diagnostics.
+- Keep compositor and system tools behind `phasor-core`; built-in and third-party QML calls go through capability-checked services.
+- Keep the system Phasor session and user configuration separate from headless test runs. The current desktop already has a system-installed Phasor session; do not stop or rewrite it while testing the repository checkout.

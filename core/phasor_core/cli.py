@@ -19,6 +19,9 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="group", required=True)
     commands.add_parser("ping")
     commands.add_parser("snapshot")
+    settings = commands.add_parser("settings").add_subparsers(dest="action", required=True)
+    settings.add_parser("get")
+    settings.add_parser("toggle")
     watch = commands.add_parser("watch")
     watch.add_argument("--events", action="store_true")
     rpc = commands.add_parser("rpc")
@@ -54,9 +57,12 @@ def parser() -> argparse.ArgumentParser:
     search_files.add_argument("query", nargs="?", default="")
     search_files.add_argument("--limit", type=int, default=60)
     files.add_parser("status")
-    for action in ("open", "reveal"):
+    for action in ("open", "reveal", "trash", "copy", "share"):
         sub = files.add_parser(action)
         sub.add_argument("path")
+    rename_file = files.add_parser("rename")
+    rename_file.add_argument("path")
+    rename_file.add_argument("name")
 
     spaces = commands.add_parser("spaces").add_subparsers(dest="action", required=True)
     spaces.add_parser("list")
@@ -76,9 +82,12 @@ def parser() -> argparse.ArgumentParser:
         else:
             sub.add_argument("id", nargs="?")
     clipboard = commands.add_parser("clipboard").add_subparsers(dest="action", required=True)
+    clipboard.add_parser("toggle")
     clipboard.add_parser("history")
     copy = clipboard.add_parser("copy")
     copy.add_argument("text")
+    restore = clipboard.add_parser("restore")
+    restore.add_argument("id")
 
     audio = commands.add_parser("audio").add_subparsers(dest="action", required=True)
     audio.add_parser("status")
@@ -121,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
             result = request("health")
         elif args.group == "snapshot":
             result = request("snapshot")
+        elif args.group == "settings":
+            result = request("settings.get" if args.action == "get" else "settings.toggle")
         elif args.group == "watch":
             if not args.events:
                 raise ValueError("Use --events to subscribe")
@@ -153,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
                 result = request("files.search", {"query": args.query, "limit": args.limit})
             elif args.action == "status":
                 result = request("files.status")
+            elif args.action == "rename":
+                result = request("files.rename", {"path": args.path, "name": args.name})
             else:
                 result = request(f"files.{args.action}", {"path": args.path})
         elif args.group == "spaces":
@@ -170,7 +183,14 @@ def main(argv: list[str] | None = None) -> int:
                 params = {"id": args.id} if args.id is not None else {}
                 result = request(f"windows.{method}", params)
         elif args.group == "clipboard":
-            result = request("clipboard.history" if args.action == "history" else "clipboard.copy", {} if args.action == "history" else {"text": args.text})
+            if args.action == "toggle":
+                result = request("clipboard.toggle")
+            elif args.action == "history":
+                result = request("clipboard.history")
+            elif args.action == "restore":
+                result = request("clipboard.restore", {"id": args.id})
+            else:
+                result = request("clipboard.copy", {"text": args.text})
         elif args.group == "audio":
             if args.action == "status":
                 result = request("audio.get_volume")

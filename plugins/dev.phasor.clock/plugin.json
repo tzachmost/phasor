@@ -9,7 +9,8 @@
   "permissions": [],
   "supportedSlots": ["launcher.status", "dock.status", "bar.right"],
   "contributions": [
-    { "slot": "launcher.status", "entrypoint": "ClockSlot.qml" }
+    { "slot": "launcher.status", "entrypoint": "ClockSlot.qml" },
+    { "slot": "bar.right", "entrypoint": "ClockSlot.qml" }
   ],
   "builtin": true
 }

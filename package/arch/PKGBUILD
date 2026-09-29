@@ -1,16 +1,13 @@
-pkgname=phasor-shell-git
-pkgver=r1.0
+pkgname=phasor-shell
+pkgver=1.0.0
 pkgrel=1
 pkgdesc='Portable Quickshell desktop shell for MangoWM'
 arch=('any')
 url='https://github.com/tzachmost/phasor'
 license=('MIT')
-depends=('mangowm-git' 'quickshell' 'python' 'xdg-utils' 'wl-clipboard' 'swaybg')
+depends=('mangowm-git' 'quickshell' 'python' 'xdg-utils' 'wl-clipboard' 'glib2' 'swaybg' 'cliphist' 'swaync' 'flameshot')
 optdepends=(
   'playerctl: MPRIS controls'
-  'cliphist: clipboard history backend'
-  'swaync: temporary notification UI'
-  'flameshot: screenshot tool'
   'nautilus: reveal files in the default file manager'
   'brightnessctl: brightness controls'
   'wireplumber: audio controls via wpctl'
@@ -18,21 +15,16 @@ optdepends=(
   'bluez: Bluetooth status and power controls'
   'polkit-gnome: authentication agent'
 )
-makedepends=('git')
-provides=('phasor-shell')
-conflicts=('phasor-shell')
-source=("git+https://github.com/tzachmost/phasor.git#branch=main")
-sha256sums=('SKIP')
-
-pkgver() {
-  cd "$srcdir/phasor"
-  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-}
+conflicts=('phasor-shell-git')
+replaces=('phasor-shell-git')
+source=("phasor-${pkgver}.tar.gz::https://github.com/tzachmost/phasor/releases/download/v${pkgver}/phasor-${pkgver}.tar.gz")
+sha256sums=('62db2076c14c4315dbd086f3af011cd36e35170e4080ae074b846fecacdd28c2')
 
 package() {
-  cd "$srcdir/phasor"
+  cd "$srcdir/phasor-$pkgver"
   local dest="$pkgdir/usr/share/phasor"
   install -d "$dest"
+  install -d "$pkgdir/usr/bin" "$pkgdir/usr/share/wayland-sessions"
   tar -c --exclude='__pycache__' --exclude='*.py[co]' --exclude='*.egg-info' \
     -f - README.md AGENTS.md LICENSE shell plugins core config session scripts docs |
     tar -x -f - -C "$dest"
@@ -40,10 +32,10 @@ package() {
   chmod 644 "$dest/.phasor-managed"
   find "$dest" -type f ! -name '.phasor-managed' ! -name '.phasor-owned-files' -printf '%P\n' > "$dest/.phasor-owned-files"
   chmod 644 "$dest/.phasor-owned-files"
-  ln -s /usr/share/phasor/scripts/phasorctl "$pkgdir/usr/bin/phasorctl"
-  ln -s /usr/share/phasor/scripts/phasor-core "$pkgdir/usr/bin/phasor-core"
-  ln -s /usr/share/phasor/scripts/phasor-doctor "$pkgdir/usr/bin/phasor-doctor"
-  ln -s /usr/share/phasor/session/phasor-session "$pkgdir/usr/bin/phasor-session"
+  ln -s ../share/phasor/scripts/phasorctl "$pkgdir/usr/bin/phasorctl"
+  ln -s ../share/phasor/scripts/phasor-core "$pkgdir/usr/bin/phasor-core"
+  ln -s ../share/phasor/scripts/phasor-doctor "$pkgdir/usr/bin/phasor-doctor"
+  ln -s ../share/phasor/session/phasor-session "$pkgdir/usr/bin/phasor-session"
   install -d "$pkgdir/usr/share/wayland-sessions"
   cat > "$pkgdir/usr/share/wayland-sessions/phasor.desktop" <<'EOF'
 [Desktop Entry]

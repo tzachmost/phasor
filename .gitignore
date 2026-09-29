@@ -4,6 +4,7 @@ __pycache__/
 .coverage
 build/
 dist/
+package/fedora/RPMS/
 *.egg-info/
 .qmlls.ini
 .venv/

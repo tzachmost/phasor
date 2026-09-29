@@ -1,0 +1,15 @@
+{
+  "id": "dev.phasor.screenshot",
+  "name": "Phasor Screenshot",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Screenshot.qml",
+  "categories": ["status-item", "screenshot"],
+  "capabilities": ["screenshots.capture"],
+  "permissions": [],
+  "supportedSlots": ["bar.right"],
+  "contributions": [
+    { "slot": "bar.right", "entrypoint": "ScreenshotSlot.qml" }
+  ],
+  "builtin": true
+}

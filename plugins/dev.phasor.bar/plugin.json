@@ -1,0 +1,22 @@
+{
+  "id": "dev.phasor.bar",
+  "name": "Phasor Bar",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "entrypoint": "Bar.qml",
+  "categories": ["surface", "bar", "status-item"],
+  "capabilities": ["spaces.read", "spaces.control", "settings.read", "settings.control", "tray.read"],
+  "permissions": [],
+  "supportedSlots": ["bar.left", "bar.right"],
+  "contributions": [],
+  "builtin": true,
+  "surface": {
+    "anchor": "top",
+    "thickness": 40,
+    "reservesWorkArea": true,
+    "overlaysWindows": false,
+    "autoHide": false,
+    "priority": 50,
+    "slots": ["bar.left", "bar.right"]
+  }
+}

@@ -20,7 +20,28 @@
     "raiseOnFocus": true
   },
   "plugins": {
+    "dev.phasor.bar": {
+      "enabled": true
+    },
+    "dev.phasor.dock": {
+      "enabled": false
+    },
+    "dev.phasor.desktop": {
+      "enabled": true
+    },
+    "dev.phasor.clipboard": {
+      "enabled": true
+    },
     "dev.phasor.launcher": {
+      "enabled": true
+    },
+    "dev.phasor.notifications": {
+      "enabled": true
+    },
+    "dev.phasor.screenshot": {
+      "enabled": true
+    },
+    "dev.phasor.settings": {
       "enabled": true
     }
   }

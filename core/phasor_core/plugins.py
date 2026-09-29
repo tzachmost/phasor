@@ -53,11 +53,15 @@ class PluginManager:
                     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                     plugin = self._validate(manifest, plugin_dir)
                     plugin_id = plugin["id"]
+                    bundle_hash = self._bundle_hash(plugin_dir)
                     if plugin_id in discovered:
-                        self.diagnostics.append(f"Duplicate plugin id {plugin_id} at {manifest_path}; ignored")
+                        if discovered[plugin_id]["bundleHash"] != bundle_hash:
+                            self.diagnostics.append(
+                                f"Conflicting plugin id {plugin_id} at {manifest_path}; ignored"
+                            )
                         continue
                     plugin["manifestPath"] = str(manifest_path)
-                    plugin["bundleHash"] = self._bundle_hash(plugin_dir)
+                    plugin["bundleHash"] = bundle_hash
                     plugin["builtin"] = self._is_builtin(plugin_dir, bool(manifest.get("builtin")))
                     plugin["contributions"] = [
                         {**item, "entrypoint": (plugin_dir / item["entrypoint"]).as_uri()}
@@ -135,11 +139,13 @@ class PluginManager:
         allowed_caps = {
             "windows.read", "windows.control", "spaces.read", "spaces.control",
             "apps.read", "apps.launch", "apps.favorites", "apps.store", "files.search", "files.open", "files.reveal",
+            "files.rename", "files.trash", "files.copy",
             "clipboard.read", "clipboard.write", "notifications.read", "tray.read",
             "notifications.control", "media.read", "media.control", "system.read",
             "audio.read", "audio.control", "brightness.read", "brightness.control",
             "bluetooth.status", "bluetooth.control", "screenshots.capture",
             "agent.context", "agent.actions", "network.status", "network.control", "theme.read",
+            "settings.read", "settings.control",
         }
         unknown = set(manifest["capabilities"]) - allowed_caps
         if unknown:

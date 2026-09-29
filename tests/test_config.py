@@ -31,6 +31,38 @@ class ConfigTests(unittest.TestCase):
             (config_dir / "settings.json").write_text(json.dumps({"schemaVersion": 1, "appearance": {"wallpaper": "Pictures/wall.jpg"}}), encoding="utf-8")
             self.assertEqual(load_theme()["wallpaper"], str(Path(directory) / "Pictures/wall.jpg"))
 
+    def test_appearance_settings_are_validated(self):
+        invalid_appearance = [
+            {"theme": "sepia"},
+            {"accent": "not-a-color"},
+            {"reducedMotion": "yes"},
+        ]
+        for appearance in invalid_appearance:
+            with self.subTest(appearance=appearance), tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"XDG_CONFIG_HOME": directory}):
+                config_dir = Path(directory) / "phasor"
+                config_dir.mkdir()
+                (config_dir / "settings.json").write_text(json.dumps({"schemaVersion": 1, "appearance": appearance}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "appearance"):
+                    load_settings()
+
+    def test_saving_settings_rejects_schema_drift(self):
+        from phasor_core.config import save_settings
+        settings = load_settings()
+        settings["appearance"]["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "Unknown appearance settings"):
+            save_settings(settings)
+
+    def test_plugin_enable_preference_must_be_boolean(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"XDG_CONFIG_HOME": directory}):
+            config_dir = Path(directory) / "phasor"
+            config_dir.mkdir()
+            (config_dir / "settings.json").write_text(json.dumps({
+                "schemaVersion": 1,
+                "plugins": {"dev.phasor.dock": {"enabled": "yes"}},
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "plugins.dev.phasor.dock.enabled"):
+                load_settings()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,9 +9,9 @@
     "appearance": {
       "type": "object",
       "properties": {
-        "theme": { "enum": ["dark", "light", "system"] },
-        "accent": { "type": "string" },
-        "reducedMotion": { "type": "boolean" },
+        "theme": { "enum": ["dark", "light", "system"], "default": "dark" },
+        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#8bd5ca" },
+        "reducedMotion": { "type": "boolean", "default": false },
         "wallpaper": { "type": "string" }
       },
       "additionalProperties": false
@@ -41,7 +41,13 @@
       },
       "additionalProperties": false
     },
-    "plugins": { "type": "object", "additionalProperties": { "type": "object" } }
+    "plugins": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": { "enabled": { "type": "boolean" } }
+      }
+    }
   },
   "additionalProperties": false
 }

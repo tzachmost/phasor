@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if [[ ! -e /run/ostree-booted ]]; then
+    printf 'This installer is for Universal Blue and other OSTree-based Fedora systems.\n' >&2
+    exit 1
+fi
+if (( EUID == 0 )); then
+    printf 'Run this helper as your regular user; it uses sudo to stage the Phasor RPM.\n' >&2
+    exit 1
+fi
+usage() {
+    cat >&2 <<'EOF'
+Universal Blue uses an immutable system image. Build a Fedora RPM on a Fedora
+build host with ./scripts/build-rpm, or download a Phasor release RPM, then run:
+
+  ./scripts/install --ostree-rpm /path/to/phasor-shell.rpm
+
+The installer enables the Terra MangoWM and Quickshell COPR repositories, then
+stages Phasor and its dependencies. The install is staged; reboot to use Phasor.
+EOF
+}
+if (( $# != 2 )); then
+    usage
+    exit 2
+fi
+if [[ "$1" != --ostree-rpm && "$1" != --rpm ]]; then
+    usage
+    exit 2
+fi
+
+RPM_FILE="$2"
+if [[ ! -f "$RPM_FILE" || -L "$RPM_FILE" ]]; then
+    printf 'Phasor RPM is not a regular file: %s\n' "$RPM_FILE" >&2
+    exit 1
+fi
+if ! command -v rpm-ostree >/dev/null 2>&1; then
+    printf 'rpm-ostree was not found.\n' >&2
+    exit 1
+fi
+if ! command -v rpm >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    printf 'rpm and curl are required to configure the package repositories.\n' >&2
+    exit 1
+fi
+
+FEDORA_RELEASE="$(rpm -E '%fedora')"
+if [[ ! "$FEDORA_RELEASE" =~ ^[0-9]+$ ]]; then
+    printf 'Could not determine the Fedora release number for the Quickshell COPR.\n' >&2
+    exit 1
+fi
+
+REPO_TMP="$(mktemp -d "${TMPDIR:-/tmp}/phasor-repos.XXXXXXXX")"
+trap 'rm -rf -- "$REPO_TMP"' EXIT
+curl --fail --silent --show-error \
+    https://github.com/terrapkg/subatomic-repos/raw/main/terra.repo \
+    -o "$REPO_TMP/phasor-terra.repo"
+curl --fail --silent --show-error \
+    "https://copr.fedorainfracloud.org/coprs/errornointernet/quickshell/repo/fedora-${FEDORA_RELEASE}/errornointernet-quickshell-fedora-${FEDORA_RELEASE}.repo" \
+    -o "$REPO_TMP/phasor-quickshell-copr.repo"
+
+install_repo() {
+    local source="$1" target="/etc/yum.repos.d/$(basename "$1")"
+    if [[ -e "$target" || -L "$target" ]]; then
+        if [[ -L "$target" || ! -f "$target" ]] || ! cmp -s "$source" "$target"; then
+            printf 'Refusing to replace a different repository file: %s\n' "$target" >&2
+            return 1
+        fi
+    else
+        sudo install -D -m 0644 "$source" "$target"
+    fi
+}
+
+install_repo "$REPO_TMP/phasor-terra.repo"
+install_repo "$REPO_TMP/phasor-quickshell-copr.repo"
+
+sudo rpm-ostree install terra-release "$RPM_FILE"
+printf 'Phasor is staged in the next system deployment. Reboot to select the Phasor session.\n'

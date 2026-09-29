@@ -1,1 +1,4 @@
 ExtensionSlot 1.0 ExtensionSlot.qml
+PhasorButton 1.0 PhasorButton.qml
+PhasorTextField 1.0 PhasorTextField.qml
+PhasorSwitch 1.0 PhasorSwitch.qml
