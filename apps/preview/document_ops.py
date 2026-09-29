@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export Preview images and PDFs without changing their source files."""
+"""Prepare Preview image and PDF copies without changing source files."""
 
 from __future__ import annotations
 
@@ -64,6 +64,35 @@ def _atomic_save(output: Path, write) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def _validated_pdf_password(value: Any, label: str, *, required: bool = False, max_bytes: int = 4096) -> str:
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be text")
+    try:
+        byte_length = len(value.encode("utf-8"))
+    except UnicodeEncodeError as error:
+        raise ValueError(f"{label} contains invalid text") from error
+    if byte_length > max_bytes:
+        raise ValueError(f"{label} is too long")
+    if required and not value:
+        raise ValueError(f"{label} cannot be empty")
+    return value
+
+
+def _unlock_pdf(reader: Any, password: str) -> None:
+    if not reader.is_encrypted:
+        return
+    if not password:
+        raise ValueError("This PDF is password protected. Enter its password to continue.")
+    try:
+        result = reader.decrypt(password)
+    except Exception as error:
+        raise ValueError("The PDF password is incorrect or its encryption is unsupported") from error
+    if not result:
+        raise ValueError("The PDF password is incorrect")
 
 
 def _optional_image_stack():
@@ -294,6 +323,90 @@ def export_image(source_value: str, output_value: str, options: dict[str, Any]) 
     return {"ok": True, "path": str(output), "width": image.width, "height": image.height}
 
 
+def _background_removal_stack():
+    try:
+        from rembg import new_session, remove
+    except ImportError as error:
+        raise ValueError(
+            "Background removal needs the optional rembg CPU package. Follow the setup in docs/preview.md."
+        ) from error
+    return new_session, remove
+
+
+def remove_image_background(source_value: str, output_value: str, options: dict[str, Any]) -> dict[str, Any]:
+    Image, ImageDraw, ImageFont, ImageOps = _optional_image_stack()
+    source = _source_path(source_value)
+    if source.suffix.lower() == ".svg":
+        raise ValueError("SVG files are view-only for now; open or export a bitmap image instead")
+    output = _output_path(source, output_value, ".png")
+    markup = validate_payload(options.get("markup", {"version": 1, "kind": "image"}))
+    if markup["kind"] != "image":
+        raise ValueError("Background removal requires image markup")
+
+    try:
+        with Image.open(source) as source_image:
+            frame_count = int(getattr(source_image, "n_frames", 1))
+            requested_frame = options.get("frame_index", 0)
+            if isinstance(requested_frame, bool):
+                raise ValueError("Image frame must be a whole number")
+            try:
+                frame_index = int(requested_frame)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Image frame must be a whole number") from error
+            if str(frame_index) != str(requested_frame).strip() or frame_index < 0 or frame_index >= frame_count:
+                raise ValueError(f"Image frame must be between 0 and {max(0, frame_count - 1)}")
+            source_image.seek(frame_index)
+            image = ImageOps.exif_transpose(source_image).copy().convert("RGBA")
+    except (OSError, ValueError, Image.DecompressionBombError) as error:
+        raise ValueError(f"Could not decode this image for background removal: {error}") from error
+
+    if image.width * image.height > MAX_IMAGE_PIXELS:
+        raise ValueError("This image is too large to process in Preview (limit: 100 megapixels)")
+
+    crop = options.get("crop")
+    if crop:
+        if not isinstance(crop, dict):
+            raise ValueError("Crop selection is invalid")
+        crop_x = _normalized(crop.get("x"), "Crop x")
+        crop_y = _normalized(crop.get("y"), "Crop y")
+        crop_width = _normalized(crop.get("width"), "Crop width")
+        crop_height = _normalized(crop.get("height"), "Crop height")
+    rotation = options.get("rotation", 0)
+    if isinstance(rotation, bool) or rotation not in (0, 90, 180, 270):
+        raise ValueError("Image rotation must be a multiple of 90 degrees")
+    flip_horizontal = options.get("flip_horizontal", False)
+    flip_vertical = options.get("flip_vertical", False)
+    if not isinstance(flip_horizontal, bool) or not isinstance(flip_vertical, bool):
+        raise ValueError("Image flip options must be boolean")
+
+    new_session, remove = _background_removal_stack()
+    try:
+        session = new_session("u2net")
+        image = remove(image, session=session, decontaminate=True).convert("RGBA")
+    except Exception as error:
+        raise ValueError(f"Could not remove this image background: {error}") from error
+
+    _draw_image_markup(image, markup["annotations"])
+
+    if crop:
+        left = max(0, min(image.width - 1, round(crop_x * image.width)))
+        top = max(0, min(image.height - 1, round(crop_y * image.height)))
+        right = max(left + 1, min(image.width, round((crop_x + crop_width) * image.width)))
+        bottom = max(top + 1, min(image.height, round((crop_y + crop_height) * image.height)))
+        image = image.crop((left, top, right, bottom))
+
+    if rotation:
+        image = image.rotate(-rotation, expand=True)
+
+    if flip_horizontal:
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if flip_vertical:
+        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+
+    _atomic_save(output, lambda stream: image.save(stream, format="PNG", optimize=True))
+    return {"ok": True, "path": str(output), "width": image.width, "height": image.height, "transparent": True}
+
+
 def _reportlab_stack():
     try:
         from reportlab.pdfbase import pdfmetrics
@@ -364,6 +477,44 @@ def _draw_pdf_markup(
             else:
                 canvas.rect(left, bottom, rect_width, rect_height, stroke=1, fill=0)
             canvas.restoreState()
+        elif mark["type"] in {"text_highlight", "underline", "strike", "note"}:
+            canvas.saveState()
+            canvas.setStrokeColorRGB(red, green, blue)
+            canvas.setFillColorRGB(red, green, blue)
+            canvas.setStrokeAlpha(alpha)
+            canvas.setLineWidth(max(0.65, unit * 0.0018))
+            canvas.setLineCap(1)
+            for x1, y1, x2, y2 in mark["rects"]:
+                left = origin_x + x1 * width
+                right = origin_x + x2 * width
+                top = origin_y + height - y1 * height
+                bottom = origin_y + height - y2 * height
+                if mark["type"] == "text_highlight":
+                    canvas.setFillAlpha(alpha * 0.32)
+                    canvas.rect(left, bottom, right - left, top - bottom, stroke=0, fill=1)
+                elif mark["type"] == "underline":
+                    canvas.line(left, bottom + line_width / 2, right, bottom + line_width / 2)
+                elif mark["type"] == "strike":
+                    middle = (top + bottom) / 2
+                    canvas.line(left, middle, right, middle)
+                elif mark["type"] == "note":
+                    canvas.setStrokeAlpha(alpha * 0.62)
+                    canvas.line(left, bottom, right, bottom)
+
+            if mark["type"] == "note":
+                x1, y1, x2, _ = mark["rects"][0]
+                icon_size = max(9, min(15, unit * 0.022))
+                icon_x = origin_x + x2 * width
+                icon_top = origin_y + height - y1 * height
+                icon_x = min(origin_x + width - icon_size, max(origin_x, icon_x - icon_size / 2))
+                icon_bottom = min(origin_y + height - icon_size, max(origin_y, icon_top - icon_size / 2))
+                canvas.setFillAlpha(alpha)
+                canvas.roundRect(icon_x, icon_bottom, icon_size, icon_size, 2, stroke=0, fill=1)
+                canvas.setFillColorRGB(0.18, 0.17, 0.14)
+                canvas.setFillAlpha(1)
+                canvas.setFont(font_name, max(6, icon_size * 0.72))
+                canvas.drawCentredString(icon_x + icon_size / 2, icon_bottom + icon_size * 0.17, "i")
+            canvas.restoreState()
         elif mark["type"] == "text" and mark["text"]:
             font_size = max(6, mark.get("size", 0.038) * unit)
             canvas.saveState()
@@ -418,6 +569,35 @@ def _pdf_overlay(page, annotations: list[dict[str, Any]]):
     return overlay_page
 
 
+def _add_pdf_text_notes(writer, page_index: int, page, annotations: list[dict[str, Any]]) -> None:
+    crop_box = page.cropbox
+    left = float(crop_box.left)
+    bottom = float(crop_box.bottom)
+    width = float(crop_box.width)
+    height = float(crop_box.height)
+    if width <= 0 or height <= 0:
+        return
+    icon_size = max(9, min(15, min(width, height) * 0.022))
+    for mark in annotations:
+        if mark["type"] != "note":
+            continue
+        _, y1, x2, _ = mark["rects"][0]
+        icon_x = min(left + width - icon_size, max(left, left + x2 * width - icon_size / 2))
+        icon_top = bottom + height - y1 * height
+        icon_bottom = min(bottom + height - icon_size, max(bottom, icon_top - icon_size / 2))
+        writer.add_annotation(page_index, {
+            "/Type": "/Annot",
+            "/Subtype": "/Text",
+            "/Rect": [icon_x, icon_bottom, icon_x + icon_size, icon_bottom + icon_size],
+            "/Contents": mark["note"],
+            "/T": "Phasor Preview",
+            "/Name": "/Comment",
+            "/C": [0.97, 0.77, 0.30],
+            "/Open": False,
+            "/F": 4,
+        })
+
+
 def _field_name(annotation: Any) -> str:
     names: list[str] = []
     current = annotation
@@ -450,17 +630,20 @@ def _field_options(field: Any) -> list[dict[str, str]]:
     return options
 
 
-def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
+def inspect_pdf_forms(source_value: str, password: str = "") -> dict[str, Any]:
     try:
         from pypdf import PdfReader
     except ImportError as error:
         raise ValueError("PDF forms need pypdf. Install the python-pypdf package.") from error
 
     source = _source_path(source_value)
+    password = _validated_pdf_password(password, "The PDF password")
     try:
         reader = PdfReader(str(source), strict=False)
         if reader.is_encrypted:
-            raise ValueError("Password-protected PDF forms cannot be opened in Preview yet")
+            if not password:
+                return {"ok": True, "encrypted": True, "fields": []}
+            _unlock_pdf(reader, password)
         fields = reader.get_fields() or {}
         pages_by_field: dict[str, set[int]] = {}
         widget_states: dict[str, set[str]] = {}
@@ -482,6 +665,10 @@ def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
 
         result: list[dict[str, Any]] = []
         for name, field in fields.items():
+            if name not in pages_by_field:
+                # Hierarchical AcroForm containers have names and inherited field
+                # values but no widget to edit. They are not user-facing fields.
+                continue
             field_type = str(field.get("/FT", ""))
             flags = int(field.get("/Ff", 0))
             options = _field_options(field)
@@ -528,14 +715,14 @@ def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
                 "options": options,
                 "pages": sorted(pages_by_field.get(name, set())),
             })
-        return {"ok": True, "fields": result}
+        return {"ok": True, "encrypted": bool(reader.is_encrypted), "fields": result}
     except ValueError:
         raise
     except Exception as error:
         raise ValueError(f"Could not read PDF form fields: {error}") from error
 
 
-def inspect_document(source_value: str) -> dict[str, Any]:
+def inspect_document(source_value: str, password: str = "") -> dict[str, Any]:
     source = _source_path(source_value)
     stat = source.stat()
     result: dict[str, Any] = {
@@ -558,7 +745,10 @@ def inspect_document(source_value: str) -> dict[str, Any]:
             raise ValueError(f"Could not read PDF information: {error}") from error
         result.update({"kind": "pdf", "encrypted": bool(reader.is_encrypted)})
         if reader.is_encrypted:
-            return result
+            password = _validated_pdf_password(password, "The PDF password")
+            if not password:
+                return result
+            _unlock_pdf(reader, password)
         result["page_count"] = len(reader.pages)
         result["pdf_version"] = str(reader.pdf_header).lstrip("%")
         metadata = reader.metadata or {}
@@ -675,6 +865,168 @@ def _validated_pdf_order(value: Any, page_count: int) -> list[int]:
     return value
 
 
+def _parse_pdf_page_selection(value: Any, page_count: int) -> list[int]:
+    if page_count < 1:
+        raise ValueError("The imported PDF has no pages")
+    if value is None or value == "":
+        return list(range(page_count))
+    if not isinstance(value, str) or len(value) > 256:
+        raise ValueError("Page selection must be a list such as 1-3,5")
+    if not re.fullmatch(r"[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*", value):
+        raise ValueError("Use page numbers or ranges such as 1-3,5")
+    result: list[int] = []
+    seen: set[int] = set()
+    for part in value.split(","):
+        ends = [int(item) for item in part.split("-")]
+        start = ends[0]
+        end = ends[-1]
+        if start < 1 or end > page_count or start > end:
+            raise ValueError(f"Page numbers must be between 1 and {page_count}")
+        for page in range(start - 1, end):
+            if page in seen:
+                raise ValueError("Page selection cannot contain duplicates")
+            seen.add(page)
+            result.append(page)
+    if not result:
+        raise ValueError("Choose at least one page to insert")
+    return result
+
+
+def insert_pdf_pages(
+    source_value: str,
+    imported_value: str,
+    output_value: str,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as error:
+        raise ValueError("PDF page editing needs pypdf. Install the python-pypdf package.") from error
+
+    if not isinstance(options, dict):
+        raise ValueError("Page insertion options have an invalid format")
+    source = _source_path(source_value)
+    if source.suffix.lower() != ".pdf":
+        raise ValueError("The current document must be a PDF")
+    imported = _source_path(imported_value) if imported_value else None
+    if imported is not None and imported.suffix.lower() != ".pdf":
+        raise ValueError("Choose a PDF document to import pages from")
+
+    output = _output_path(source, output_value, ".pdf")
+    if imported is not None and output.resolve() == imported.resolve():
+        raise ValueError("Choose a new file name so the imported PDF stays unchanged")
+
+    source_password = _validated_pdf_password(options.get("source_password", ""), "The current PDF password")
+    import_password = _validated_pdf_password(options.get("import_password", ""), "The imported PDF password")
+    protect_password = _validated_pdf_password(
+        options.get("protect_password", ""), "The output PDF password", max_bytes=127
+    )
+    markup = validate_payload(options.get("markup", {"version": 1, "kind": "pdf"}))
+    if markup["kind"] != "pdf":
+        raise ValueError("Page insertion requires PDF markup")
+
+    insert_at = options.get("insert_at")
+    if isinstance(insert_at, bool) or not isinstance(insert_at, int) or insert_at < 0:
+        raise ValueError("Choose a valid page position for the insertion")
+
+    try:
+        with source.open("rb") as source_stream:
+            source_reader = PdfReader(source_stream, strict=False)
+            _unlock_pdf(source_reader, source_password)
+            if _pdf_has_signatures(source_reader):
+                raise ValueError("Cannot insert pages into a digitally signed PDF; use a new unsigned copy")
+            source_page_count = len(source_reader.pages)
+            source_encrypted = bool(source_reader.is_encrypted)
+        if source_page_count < 1:
+            raise ValueError("The PDF has no pages to edit")
+
+        imported_encrypted = False
+        selected_pages: list[int] = []
+        imported_reader = None
+        imported_stream = None
+        if imported is not None:
+            imported_stream = imported.open("rb")
+            imported_reader = PdfReader(imported_stream, strict=False)
+            _unlock_pdf(imported_reader, import_password)
+            if _pdf_has_signatures(imported_reader):
+                raise ValueError("Cannot import pages from a digitally signed PDF")
+            imported_encrypted = bool(imported_reader.is_encrypted)
+            selected_pages = _parse_pdf_page_selection(options.get("pages", ""), len(imported_reader.pages))
+
+        if source_encrypted or imported_encrypted:
+            if not protect_password:
+                raise ValueError("Set a password for the new PDF copy before inserting protected pages")
+
+        with tempfile.TemporaryDirectory(prefix="phasor-preview-pages-") as temporary:
+            prepared_source = Path(temporary) / "prepared-current.pdf"
+            export_pdf(
+                str(source),
+                str(prepared_source),
+                {"markup": markup, "source_password": source_password},
+            )
+            prepared_reader = PdfReader(str(prepared_source), strict=False)
+            prepared_page_count = len(prepared_reader.pages)
+            total_imported_pages = len(selected_pages) if imported is not None else 1
+            if prepared_page_count + total_imported_pages > 20_000:
+                raise ValueError("PDFs may contain up to 20,000 pages")
+            if insert_at > len(prepared_reader.pages):
+                raise ValueError("The insertion position is outside the current page order")
+
+            writer = PdfWriter()
+            writer.append(prepared_reader)
+            if imported_reader is not None:
+                external_fields = imported_reader.get_fields() or {}
+                if external_fields:
+                    seen_names = {str(name) for name in (prepared_reader.get_fields() or {})}
+                    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", imported.stem).strip("_-")[:64] or "document"
+                    prefix = f"{stem}_import"
+                    suffix = 2
+                    while prefix in seen_names or any(f"{prefix}.{name}" in seen_names for name in external_fields):
+                        prefix = f"{stem}_import_{suffix}"
+                        suffix += 1
+                    imported_reader.add_form_topname(prefix)
+                writer.merge(insert_at, imported_reader, pages=selected_pages)
+            else:
+                if insert_at > 0:
+                    reference_page = prepared_reader.pages[insert_at - 1]
+                else:
+                    reference_page = prepared_reader.pages[0]
+                width = float(reference_page.mediabox.width)
+                height = float(reference_page.mediabox.height)
+                if int(reference_page.rotation or 0) % 180:
+                    width, height = height, width
+                blank_writer = PdfWriter()
+                blank_writer.add_blank_page(width=width, height=height)
+                blank_buffer = io.BytesIO()
+                blank_writer.write(blank_buffer)
+                blank_reader = PdfReader(io.BytesIO(blank_buffer.getvalue()))
+                writer.merge(insert_at, blank_reader, pages=[0])
+
+            if protect_password:
+                writer.encrypt(protect_password, algorithm="AES-256")
+
+            def write(stream) -> None:
+                writer.write(stream)
+
+            _atomic_save(output, write)
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError(f"Could not insert PDF pages: {error}") from error
+    finally:
+        if imported_stream is not None:
+            imported_stream.close()
+
+    result = {"ok": True, "path": str(output), "pages": prepared_page_count + total_imported_pages}
+    if imported is not None:
+        result["imported_pages"] = len(selected_pages)
+    else:
+        result["blank_pages"] = 1
+    if protect_password:
+        result["encrypted"] = True
+    return result
+
+
 def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) -> dict[str, Any]:
     try:
         from pypdf import PdfReader, PdfWriter
@@ -683,14 +1035,20 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
 
     source = _source_path(source_value)
     output = _output_path(source, output_value, ".pdf")
+    source_password = _validated_pdf_password(options.get("source_password", ""), "The PDF password")
+    protect_password = _validated_pdf_password(
+        options.get("protect_password", ""), "The output PDF password", max_bytes=127
+    )
+    reduce_file_size = options.get("reduce_file_size", False)
+    if not isinstance(reduce_file_size, bool):
+        raise ValueError("The reduce file size option must be true or false")
     markup = validate_payload(options.get("markup", {"version": 1, "kind": "pdf"}))
     if markup["kind"] != "pdf":
         raise ValueError("PDF export requires PDF markup")
 
     try:
         reader = PdfReader(str(source), strict=False)
-        if reader.is_encrypted:
-            raise ValueError("Password-protected PDFs cannot be edited in Preview yet")
+        _unlock_pdf(reader, source_password)
         source_page_count = len(reader.pages)
         if source_page_count < 1:
             raise ValueError("The PDF has no pages to export")
@@ -710,9 +1068,19 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
             annotations = markup["pages"].get(str(source_index), [])
             if annotations:
                 page.merge_page(_pdf_overlay(page, annotations), over=True)
+                _add_pdf_text_notes(writer, output_index, page, annotations)
             rotation = rotations.get(str(source_index), 0)
             if rotation:
                 page.rotate(rotation)
+
+        if reduce_file_size:
+            for page in writer.pages:
+                page.compress_content_streams()
+            compress_objects = getattr(writer, "compress_identical_objects", None)
+            if compress_objects:
+                compress_objects()
+        if protect_password:
+            writer.encrypt(protect_password, algorithm="AES-256")
 
         def write(stream) -> None:
             writer.write(stream)
@@ -723,7 +1091,13 @@ def export_pdf(source_value: str, output_value: str, options: dict[str, Any]) ->
     except Exception as error:
         raise ValueError(f"Could not export this PDF: {error}") from error
 
-    return {"ok": True, "path": str(output), "pages": len(page_order)}
+    result = {"ok": True, "path": str(output), "pages": len(page_order)}
+    if reduce_file_size:
+        result["input_size_bytes"] = source.stat().st_size
+        result["output_size_bytes"] = output.stat().st_size
+    if protect_password:
+        result["encrypted"] = True
+    return result
 
 
 def _pdf_has_signatures(reader: Any) -> bool:
@@ -742,6 +1116,315 @@ def _pdf_has_signatures(reader: Any) -> bool:
         if isinstance(byte_range, ArrayObject) and len(byte_range) >= 4:
             return True
     return False
+
+
+_OCR_LANGUAGE = re.compile(r"^[A-Za-z0-9_-]+(?:\+[A-Za-z0-9_-]+)*$")
+
+
+def extract_image_selection(source_value: str, output_value: str, options: dict[str, Any]) -> dict[str, Any]:
+    Image, ImageDraw, _, ImageOps = _optional_image_stack()
+    source = _source_path(source_value)
+    if source.suffix.lower() == ".svg":
+        raise ValueError("Freeform extraction needs a bitmap image; SVG extraction is not supported yet")
+    output = _output_path(source, output_value, ".png")
+
+    raw_points = options.get("points")
+    if not isinstance(raw_points, list) or len(raw_points) < 3 or len(raw_points) > 6000:
+        raise ValueError("Trace a freeform selection with at least three points")
+    points = []
+    for point in raw_points:
+        if not isinstance(point, list) or len(point) != 2:
+            raise ValueError("Each selection point must contain an x and y coordinate")
+        points.append((_normalized(point[0], "Selection x"), _normalized(point[1], "Selection y")))
+    if len(set(points)) < 3:
+        raise ValueError("Trace a freeform selection with at least three distinct points")
+
+    try:
+        with Image.open(source) as source_image:
+            frame_count = int(getattr(source_image, "n_frames", 1))
+            requested_frame = options.get("frame_index", 0)
+            if isinstance(requested_frame, bool):
+                raise ValueError("Image frame must be a whole number")
+            try:
+                frame_index = int(requested_frame)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Image frame must be a whole number") from error
+            if str(frame_index) != str(requested_frame).strip() or frame_index < 0 or frame_index >= frame_count:
+                raise ValueError(f"Image frame must be between 0 and {max(0, frame_count - 1)}")
+            source_image.seek(frame_index)
+            image = ImageOps.exif_transpose(source_image).copy().convert("RGBA")
+    except (OSError, ValueError, Image.DecompressionBombError) as error:
+        raise ValueError(f"Could not decode this image for selection extraction: {error}") from error
+
+    if image.width * image.height > MAX_IMAGE_PIXELS:
+        raise ValueError("This image is too large for selection extraction in Preview (limit: 100 megapixels)")
+
+    mask = Image.new("L", image.size, 0)
+    ImageDraw.Draw(mask).polygon(
+        [(round(x * (image.width - 1)), round(y * (image.height - 1))) for x, y in points],
+        fill=255,
+    )
+
+    crop = options.get("crop")
+    if crop:
+        if not isinstance(crop, dict):
+            raise ValueError("Crop selection is invalid")
+        x = _normalized(crop.get("x"), "Crop x")
+        y = _normalized(crop.get("y"), "Crop y")
+        crop_width = _normalized(crop.get("width"), "Crop width")
+        crop_height = _normalized(crop.get("height"), "Crop height")
+        left = max(0, min(image.width - 1, round(x * image.width)))
+        top = max(0, min(image.height - 1, round(y * image.height)))
+        right = max(left + 1, min(image.width, round((x + crop_width) * image.width)))
+        bottom = max(top + 1, min(image.height, round((y + crop_height) * image.height)))
+        image = image.crop((left, top, right, bottom))
+        mask = mask.crop((left, top, right, bottom))
+
+    rotation = options.get("rotation", 0)
+    if isinstance(rotation, bool) or rotation not in (0, 90, 180, 270):
+        raise ValueError("Image rotation must be a multiple of 90 degrees")
+    if rotation:
+        image = image.rotate(-rotation, expand=True)
+        mask = mask.rotate(-rotation, expand=True)
+    flip_horizontal = options.get("flip_horizontal", False)
+    flip_vertical = options.get("flip_vertical", False)
+    if not isinstance(flip_horizontal, bool) or not isinstance(flip_vertical, bool):
+        raise ValueError("Image flip options must be boolean")
+    if flip_horizontal:
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        mask = mask.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if flip_vertical:
+        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        mask = mask.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+
+    bounds = mask.getbbox()
+    if bounds is None:
+        raise ValueError("The freeform selection does not include any image pixels")
+    image = image.crop(bounds)
+    mask = mask.crop(bounds)
+    try:
+        from PIL import ImageChops
+
+        image.putalpha(ImageChops.multiply(image.getchannel("A"), mask))
+    except ImportError as error:
+        raise ValueError("Freeform extraction needs Pillow's image operations") from error
+
+    if image.width * image.height > MAX_IMAGE_PIXELS:
+        raise ValueError("The extracted selection exceeds the 100 megapixel limit")
+    _atomic_save(output, lambda stream: image.save(stream, format="PNG", optimize=True))
+    return {"ok": True, "path": str(output), "width": image.width, "height": image.height}
+
+
+def available_ocr_languages() -> dict[str, Any]:
+    executable = shutil.which("tesseract")
+    if not executable:
+        raise ValueError("Local text recognition needs Tesseract. Follow the optional OCR setup in Preview help.")
+    try:
+        result = subprocess.run(
+            [executable, "--list-langs"], capture_output=True, text=True, timeout=20, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f"Could not query Tesseract languages: {error}") from error
+    if result.returncode != 0:
+        raise ValueError("Could not query Tesseract languages. Check the local Tesseract installation.")
+    languages = []
+    for line in result.stdout.splitlines():
+        language = line.strip()
+        if language != "osd" and re.fullmatch(r"[A-Za-z0-9_-]+", language):
+            languages.append(language)
+    if not languages:
+        raise ValueError("No Tesseract language data is installed. Install at least one language pack.")
+    return {"ok": True, "languages": languages}
+
+
+def _validated_ocr_language(value: Any, available: list[str]) -> str:
+    language = "eng" if value is None or value == "" else value
+    if not isinstance(language, str) or len(language) > 128 or not _OCR_LANGUAGE.fullmatch(language):
+        raise ValueError("Choose one or more installed OCR language codes")
+    missing = [item for item in language.split("+") if item not in available]
+    if missing:
+        raise ValueError("OCR language data is not installed: " + ", ".join(missing))
+    return language
+
+
+def _ocr_image(source: Path, options: dict[str, Any]):
+    Image, _, _, ImageOps = _optional_image_stack()
+    if source.suffix.lower() == ".svg":
+        raise ValueError("Text recognition needs a bitmap image; SVG recognition is not supported yet")
+    try:
+        with Image.open(source) as source_image:
+            frame_count = int(getattr(source_image, "n_frames", 1))
+            requested_frame = options.get("frame_index", 0)
+            if isinstance(requested_frame, bool):
+                raise ValueError("Image frame must be a whole number")
+            try:
+                frame_index = int(requested_frame)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Image frame must be a whole number") from error
+            if str(frame_index) != str(requested_frame).strip() or frame_index < 0 or frame_index >= frame_count:
+                raise ValueError(f"Image frame must be between 0 and {max(0, frame_count - 1)}")
+            source_image.seek(frame_index)
+            image = ImageOps.exif_transpose(source_image).copy().convert("RGB")
+    except (OSError, ValueError, Image.DecompressionBombError) as error:
+        raise ValueError(f"Could not decode this image for text recognition: {error}") from error
+
+    if image.width * image.height > MAX_IMAGE_PIXELS:
+        raise ValueError("This image is too large for text recognition in Preview (limit: 100 megapixels)")
+
+    crop = options.get("crop")
+    if crop:
+        if not isinstance(crop, dict):
+            raise ValueError("Crop selection is invalid")
+        x = _normalized(crop.get("x"), "Crop x")
+        y = _normalized(crop.get("y"), "Crop y")
+        crop_width = _normalized(crop.get("width"), "Crop width")
+        crop_height = _normalized(crop.get("height"), "Crop height")
+        left = max(0, min(image.width - 1, round(x * image.width)))
+        top = max(0, min(image.height - 1, round(y * image.height)))
+        right = max(left + 1, min(image.width, round((x + crop_width) * image.width)))
+        bottom = max(top + 1, min(image.height, round((y + crop_height) * image.height)))
+        image = image.crop((left, top, right, bottom))
+
+    rotation = options.get("rotation", 0)
+    if isinstance(rotation, bool) or rotation not in (0, 90, 180, 270):
+        raise ValueError("Image rotation must be a multiple of 90 degrees")
+    if rotation:
+        image = image.rotate(-rotation, expand=True)
+    flip_horizontal = options.get("flip_horizontal", False)
+    flip_vertical = options.get("flip_vertical", False)
+    if not isinstance(flip_horizontal, bool) or not isinstance(flip_vertical, bool):
+        raise ValueError("Image flip options must be boolean")
+    if flip_horizontal:
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if flip_vertical:
+        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    return image
+
+
+def recognize_image_text(source_value: str, options: dict[str, Any]) -> dict[str, Any]:
+    source = _source_path(source_value)
+    language_info = available_ocr_languages()
+    language = _validated_ocr_language(options.get("language", "eng"), language_info["languages"])
+    image = _ocr_image(source, options)
+    executable = shutil.which("tesseract")
+    if not executable:
+        raise ValueError("Local text recognition needs Tesseract. Follow the optional OCR setup in Preview help.")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="phasor-preview-ocr-") as temporary:
+            input_path = Path(temporary) / "image.png"
+            image.save(input_path, format="PNG")
+            environment = os.environ.copy()
+            environment["OMP_THREAD_LIMIT"] = "2"
+            result = subprocess.run(
+                [executable, str(input_path), "stdout", "-l", language, "--psm", "3"],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+                env=environment,
+            )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("Text recognition took too long. Try a smaller image or a narrower crop.") from error
+    except OSError as error:
+        raise ValueError(f"Could not run Tesseract: {error}") from error
+    if result.returncode != 0:
+        message = result.stderr.strip().splitlines()
+        detail = message[-1] if message else "Tesseract returned an error"
+        raise ValueError(f"Text recognition failed: {detail[:400]}")
+    return {"ok": True, "text": result.stdout.strip(), "language": language}
+
+
+def embed_pdf_text(source_value: str, output_value: str, options: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as error:
+        raise ValueError("PDF text recognition needs pypdf. Install the Preview PDF dependencies.") from error
+
+    source = _source_path(source_value)
+    output = _output_path(source, output_value, ".pdf")
+    source_password = _validated_pdf_password(options.get("source_password", ""), "The PDF password")
+    markup = validate_payload(options.get("markup", {"version": 1, "kind": "pdf"}))
+    if markup["kind"] != "pdf":
+        raise ValueError("Searchable PDF export requires PDF markup")
+    language_info = available_ocr_languages()
+    language = _validated_ocr_language(options.get("language", "eng"), language_info["languages"])
+    executable = shutil.which("ocrmypdf")
+    if not executable:
+        raise ValueError("Searchable PDF export needs OCRmyPDF. Follow the optional OCR setup in Preview help.")
+
+    try:
+        reader = PdfReader(str(source), strict=False)
+        encrypted = reader.is_encrypted
+        _unlock_pdf(reader, source_password)
+        page_count = len(reader.pages)
+        if page_count < 1:
+            raise ValueError("The PDF has no pages to recognize")
+        if _pdf_has_signatures(reader):
+            raise ValueError("This PDF is digitally signed. OCR would invalidate its signature; save an unsigned copy first.")
+
+        page_order = markup.get("page_order")
+        page_rotations = markup.get("page_rotations", {})
+        has_page_changes = (
+            any(annotations for annotations in markup["pages"].values())
+            or bool(markup.get("form_values"))
+            or bool(page_rotations and any(rotation for rotation in page_rotations.values()))
+            or (page_order is not None and page_order != list(range(page_count)))
+        )
+
+        with tempfile.TemporaryDirectory(prefix=f".{output.stem}-ocr-", dir=output.parent) as temporary:
+            work = Path(temporary)
+            input_path = source
+            if has_page_changes:
+                input_path = work / "prepared-input.pdf"
+                prepared = export_pdf(
+                    str(source),
+                    str(input_path),
+                    {"source_password": source_password, "markup": markup},
+                )
+                page_count = prepared["pages"]
+            elif encrypted:
+                input_path = work / "unlocked-input.pdf"
+                writer = PdfWriter()
+                writer.clone_document_from_reader(reader)
+                with input_path.open("wb") as stream:
+                    writer.write(stream)
+
+            temporary_output = work / "searchable-output.pdf"
+            environment = os.environ.copy()
+            environment["OMP_THREAD_LIMIT"] = "2"
+            command = [
+                executable,
+                "--output-type", "pdf",
+                "--redo-ocr",
+                "--optimize", "0",
+                "--jobs", "2",
+                "--quiet",
+                "-l", language,
+                str(input_path),
+                str(temporary_output),
+            ]
+            try:
+                result = subprocess.run(
+                    command, capture_output=True, text=True, timeout=7200, check=False, env=environment
+                )
+            except subprocess.TimeoutExpired as error:
+                raise ValueError("PDF text recognition took too long. Try processing a smaller document.") from error
+            if result.returncode != 0:
+                details = result.stderr.strip().splitlines()
+                detail = details[-1] if details else "OCRmyPDF returned an error"
+                raise ValueError(f"Could not create a searchable PDF: {detail[:500]}")
+            if not temporary_output.is_file() or temporary_output.stat().st_size == 0:
+                raise ValueError("OCRmyPDF finished without creating a PDF")
+            output_reader = PdfReader(str(temporary_output), strict=False)
+            if len(output_reader.pages) != page_count:
+                raise ValueError("OCRmyPDF changed the document page count; the output was not saved")
+            os.replace(temporary_output, output)
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError(f"Could not create a searchable PDF: {error}") from error
+    return {"ok": True, "path": str(output), "pages": page_count, "language": language}
 
 
 def _preview_signing_site_paths() -> list[Path]:
@@ -840,6 +1523,7 @@ def sign_pdf(
     certificate_value: str,
     options: dict[str, Any],
     password: str,
+    source_password: str = "",
 ) -> dict[str, Any]:
     try:
         from pypdf import PdfReader
@@ -849,6 +1533,7 @@ def sign_pdf(
         raise ValueError("Signature options must be an object")
     if not isinstance(password, str) or len(password) > 4096:
         raise ValueError("The certificate password is invalid or too long")
+    source_password = _validated_pdf_password(source_password, "The PDF password")
     source = _source_path(source_value)
     certificate = _source_path(certificate_value)
     output = _output_path(source, output_value, ".pdf")
@@ -860,8 +1545,12 @@ def sign_pdf(
 
     try:
         source_reader = PdfReader(str(source), strict=False)
-        if source_reader.is_encrypted:
-            raise ValueError("Password-protected PDFs cannot be signed in Preview yet")
+        source_encrypted = bool(source_reader.is_encrypted)
+        source_encryption_revision = 0
+        if source_encrypted:
+            encryption_dictionary = source_reader.trailer.raw_get("/Encrypt").get_object()
+            source_encryption_revision = int(encryption_dictionary.get("/R", 0))
+        _unlock_pdf(source_reader, source_password)
         page_count = len(source_reader.pages)
         if page_count < 1:
             raise ValueError("This PDF has no pages to sign")
@@ -914,14 +1603,24 @@ def sign_pdf(
     if not isinstance(location, str) or len(location) > 256:
         raise ValueError("The signing location must be 256 characters or fewer")
 
-    def prepare_and_sign(signature_source: Path, selected_page: int) -> None:
+    def prepare_and_sign(signature_source: Path, selected_page: int, signing_source_password: str) -> None:
         signature_reader = PdfReader(str(signature_source), strict=False)
+        _unlock_pdf(signature_reader, signing_source_password)
         pdf_box = _signature_box(
             signature_reader.pages[selected_page], normalized_box, viewer_rotation
         )
         existing_names = set((signature_reader.get_fields() or {}).keys())
         with signature_source.open("rb") as source_stream:
-            writer = IncrementalPdfFileWriter(source_stream)
+            from pyhanko.pdf_utils.reader import PdfFileReader
+
+            previous = PdfFileReader(source_stream)
+            if previous.security_handler is not None:
+                auth_result = previous.decrypt(signing_source_password)
+                if auth_result.status.value == 0:
+                    raise ValueError(
+                        "The signing library cannot preserve this protected PDF's security settings"
+                    )
+            writer = IncrementalPdfFileWriter(source_stream, prev=previous)
             field_name = "PhasorSignature"
             suffix = 2
             while field_name in existing_names:
@@ -951,18 +1650,26 @@ def sign_pdf(
             )
 
     try:
-        if pending_edits:
+        if pending_edits or (source_encrypted and source_encryption_revision == 5 and not already_signed):
             with tempfile.TemporaryDirectory(prefix="phasor-preview-sign-") as directory:
                 prepared = Path(directory) / "prepared.pdf"
-                export_pdf(str(source), str(prepared), {"markup": markup})
-                prepare_and_sign(prepared, page_index)
+                export_pdf(
+                    str(source),
+                    str(prepared),
+                    {
+                        "markup": markup,
+                        "source_password": source_password if source_encrypted else "",
+                        "protect_password": source_password if source_encrypted else "",
+                    },
+                )
+                prepare_and_sign(prepared, page_index, source_password if source_encrypted else "")
         else:
-            prepare_and_sign(source, page_index)
+            prepare_and_sign(source, page_index, source_password if source_encrypted else "")
     except ValueError:
         raise
     except Exception as error:
         raise ValueError(f"Could not digitally sign this PDF: {error}") from error
-    return {"ok": True, "path": str(output), "page": page_index + 1}
+    return {"ok": True, "path": str(output), "page": page_index + 1, "encrypted": source_encrypted}
 
 
 def merge_pdfs(source_values: list[str], output_value: str, options: dict[str, Any]) -> dict[str, Any]:
@@ -982,14 +1689,14 @@ def merge_pdfs(source_values: list[str], output_value: str, options: dict[str, A
     if output.resolve() in {source.resolve() for source in sources}:
         raise ValueError("Choose a new file name so none of the original PDFs are overwritten")
 
+    source_password = _validated_pdf_password(options.get("source_password", ""), "The PDF password")
     markup = options.get("markup", {"version": 1, "kind": "pdf"})
     total_pages = 0
     writer = PdfWriter()
     try:
         with sources[0].open("rb") as source_stream:
             original_reader = PdfReader(source_stream, strict=False)
-            if original_reader.is_encrypted:
-                raise ValueError(f"Password-protected PDFs cannot be merged ({sources[0].name})")
+            _unlock_pdf(original_reader, source_password)
             if _pdf_has_signatures(original_reader):
                 raise ValueError(
                     f"Cannot merge {sources[0].name}: it contains a digital signature, which merging would invalidate"
@@ -997,7 +1704,11 @@ def merge_pdfs(source_values: list[str], output_value: str, options: dict[str, A
 
         with tempfile.TemporaryDirectory(prefix="phasor-preview-merge-") as temporary:
             prepared_first = Path(temporary) / "phasor-merge-first.pdf"
-            export_pdf(str(sources[0]), str(prepared_first), {"markup": markup})
+            export_pdf(
+                str(sources[0]),
+                str(prepared_first),
+                {"markup": markup, "source_password": source_password},
+            )
             with ExitStack() as stack:
                 seen_form_names: set[str] = set()
                 for document_index, path in enumerate([prepared_first, *sources[1:]], start=1):
@@ -1122,7 +1833,11 @@ def print_document(source_value: str, options: dict[str, Any]) -> dict[str, Any]
         temporary_root = Path(temporary)
         pdf_path = temporary_root / "phasor-print.pdf"
         if source.suffix.lower() == ".pdf":
-            export_pdf(str(source), str(pdf_path), {"markup": markup})
+            export_pdf(
+                str(source),
+                str(pdf_path),
+                {"markup": markup, "source_password": options.get("source_password", "")},
+            )
         else:
             if markup["kind"] != "image":
                 raise ValueError("Image printing requires image markup")
@@ -1192,10 +1907,18 @@ def main(argv: list[str]) -> int:
     try:
         if len(argv) == 2 and argv[1] == "printers":
             result = list_printers()
+        elif len(argv) == 2 and argv[1] == "ocr-languages":
+            result = available_ocr_languages()
         elif len(argv) == 3 and argv[1] == "inspect":
             result = inspect_document(argv[2])
+        elif len(argv) == 4 and argv[1] == "inspect":
+            options = _json_object_argument(argv[3], "Inspection options")
+            result = inspect_document(argv[2], options.get("password", ""))
         elif len(argv) == 3 and argv[1] == "forms":
             result = inspect_pdf_forms(argv[2])
+        elif len(argv) == 4 and argv[1] == "forms":
+            options = _json_object_argument(argv[3], "Form inspection options")
+            result = inspect_pdf_forms(argv[2], options.get("password", ""))
         elif len(argv) == 4 and argv[1] == "print":
             options = _json_object_argument(argv[3], "Print options")
             result = print_document(argv[2], options)
@@ -1205,23 +1928,46 @@ def main(argv: list[str]) -> int:
             if not isinstance(sources, list) or any(not isinstance(path, str) for path in sources):
                 raise ValueError("Merge input paths must be a list of strings")
             result = merge_pdfs(sources, argv[2], options)
+        elif len(argv) == 6 and argv[1] == "insert":
+            options = _json_object_argument(argv[5], "Page insertion options")
+            result = insert_pdf_pages(argv[2], argv[3], argv[4], options)
         elif len(argv) == 5 and argv[1] in {"image", "pdf"}:
             options = _json_object_argument(argv[4], "Export options")
             result = export_image(argv[2], argv[3], options) if argv[1] == "image" else export_pdf(argv[2], argv[3], options)
+        elif len(argv) == 5 and argv[1] == "background":
+            options = _json_object_argument(argv[4], "Background removal options")
+            result = remove_image_background(argv[2], argv[3], options)
+        elif len(argv) == 5 and argv[1] == "extract-selection":
+            options = _json_object_argument(argv[4], "Freeform selection options")
+            result = extract_image_selection(argv[2], argv[3], options)
+        elif len(argv) == 4 and argv[1] == "recognize-image":
+            options = _json_object_argument(argv[3], "Image recognition options")
+            result = recognize_image_text(argv[2], options)
+        elif len(argv) == 5 and argv[1] == "searchable-pdf":
+            options = _json_object_argument(argv[4], "PDF recognition options")
+            result = embed_pdf_text(argv[2], argv[3], options)
         elif len(argv) == 5 and argv[1] == "sign":
             payload = _read_json_line_from_stdin("The signing input")
             if (
                 not isinstance(payload, dict)
                 or not isinstance(payload.get("password"), str)
                 or not isinstance(payload.get("options"), dict)
+                or not isinstance(payload.get("source_password", ""), str)
             ):
                 raise ValueError("The signing input is invalid")
             password = payload["password"]
             if len(password) > 4096:
                 raise ValueError("The certificate password is too long")
-            result = sign_pdf(argv[2], argv[3], argv[4], payload["options"], password)
+            result = sign_pdf(
+                argv[2],
+                argv[3],
+                argv[4],
+                payload["options"],
+                password,
+                payload.get("source_password", ""),
+            )
         else:
-            raise ValueError("Usage: document_ops.py printers | inspect DOCUMENT | forms PDF | print DOCUMENT OPTIONS_JSON|- | merge OUTPUT SOURCES_JSON OPTIONS_JSON|- | image|pdf SOURCE OUTPUT OPTIONS_JSON|- | sign SOURCE OUTPUT CERTIFICATE (JSON on stdin)")
+            raise ValueError("Usage: document_ops.py printers | ocr-languages | inspect DOCUMENT [OPTIONS_JSON|-] | forms PDF [OPTIONS_JSON|-] | print DOCUMENT OPTIONS_JSON|- | merge OUTPUT SOURCES_JSON OPTIONS_JSON|- | insert SOURCE IMPORT_PDF OUTPUT OPTIONS_JSON|- | image|pdf SOURCE OUTPUT OPTIONS_JSON|- | background SOURCE OUTPUT OPTIONS_JSON|- | extract-selection SOURCE OUTPUT OPTIONS_JSON|- | recognize-image SOURCE OPTIONS_JSON|- | searchable-pdf SOURCE OUTPUT OPTIONS_JSON|- | sign SOURCE OUTPUT CERTIFICATE (JSON on stdin)")
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("ok", True) else 1
     except (OSError, ValueError, json.JSONDecodeError) as error:

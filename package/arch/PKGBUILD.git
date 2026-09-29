@@ -5,11 +5,14 @@ pkgdesc='Portable Quickshell desktop shell for MangoWM'
 arch=('any')
 url='https://github.com/tzachmost/phasor'
 license=('MIT')
-depends=('mangowm-git' 'quickshell' 'python' 'python-pillow' 'python-pypdf' 'python-reportlab' 'libwebp' 'ttf-dejavu' 'xdg-utils' 'wl-clipboard' 'glib2' 'swaybg' 'cliphist' 'swaync' 'flameshot')
+depends=('mangowm-git' 'quickshell' 'python' 'python-pillow' 'python-pypdf>=5.7.0' 'python-reportlab' 'python-cryptography' 'libwebp' 'ttf-dejavu' 'xdg-utils' 'wl-clipboard' 'glib2' 'swaybg' 'cliphist' 'swaync' 'flameshot')
 optdepends=(
   'qt6-webengine: PDF viewing in Phasor Preview'
   'cups: printing from Phasor Preview'
   'python-pyhanko: certificate-based PDF signing in Phasor Preview'
+  'tesseract: local text recognition in Preview'
+  'tesseract-data-eng: English OCR language data for Preview'
+  'ocrmypdf: searchable PDF copies from scans (AUR package)'
   'playerctl: MPRIS controls'
   'nautilus: reveal files in the default file manager'
   'brightnessctl: brightness controls'

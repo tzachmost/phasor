@@ -11,8 +11,9 @@ Requires:       mangowm
 Requires:       quickshell
 Requires:       python3
 Requires:       python3-pillow
-Requires:       python3-pypdf
+Requires:       python3-pypdf >= 5.7.0
 Requires:       python3-reportlab
+Requires:       python3-cryptography
 Requires:       dejavu-sans-fonts
 Requires:       libwebp
 Requires:       xdg-utils
@@ -30,6 +31,9 @@ Recommends:     bluez
 Recommends:     polkit-gnome
 Suggests:       qt6-qtpdf
 Suggests:       cups-client
+Suggests:       tesseract
+Suggests:       tesseract-langpack-eng
+Suggests:       ocrmypdf
 
 %description
 Phasor is a portable MangoWM desktop shell with a Quickshell UI, app and file

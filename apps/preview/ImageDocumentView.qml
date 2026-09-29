@@ -15,6 +15,10 @@ Item {
     property bool flippedHorizontally: false
     property bool flippedVertically: false
     property var cropRect: null
+    property var lassoPoints: []
+    property var activeLassoPoints: []
+    property bool lassoDrawing: false
+    readonly property bool hasLassoSelection: lassoPoints.length >= 3
     readonly property bool sideways: Math.abs(rotation % 180) > 45 && Math.abs(rotation % 180) < 135
     readonly property real fitScale: {
         if (image.status !== Image.Ready || image.implicitWidth <= 0 || image.implicitHeight <= 0) return 1
@@ -71,6 +75,13 @@ Item {
         cropRect = null
     }
 
+    function clearLasso() {
+        lassoPoints = []
+        activeLassoPoints = []
+        lassoDrawing = false
+        lassoCanvas.requestPaint()
+    }
+
     function resetDocument() {
         cropRect = null
         rotation = 0
@@ -78,6 +89,7 @@ Item {
         framePlaybackPaused = false
         flippedHorizontally = false
         flippedVertically = false
+        clearLasso()
         Qt.callLater(function() { viewport.returnToBounds() })
     }
 
@@ -152,7 +164,7 @@ Item {
                         yScale: root.flippedVertically ? -1 : 1
                     }
                 ]
-                activeTool: root.activeTool === "crop" ? "select" : root.activeTool
+                activeTool: root.activeTool === "crop" || root.activeTool === "lasso" ? "select" : root.activeTool
                 inkColor: root.markColor
                 strokeScale: root.strokeScale
                 onMarkupChanged: root.markupChanged()
@@ -217,6 +229,93 @@ Item {
                         if (root.cropRect && (root.cropRect.width < 0.005 || root.cropRect.height < 0.005)) root.cropRect = null
                     }
                     onCanceled: root.cropRect = null
+                }
+            }
+
+            Item {
+                id: lassoLayer
+                width: image.width
+                height: image.height
+                anchors.centerIn: image
+                transform: [
+                    Rotation { origin.x: lassoLayer.width / 2; origin.y: lassoLayer.height / 2; angle: root.rotation },
+                    Scale {
+                        origin.x: lassoLayer.width / 2
+                        origin.y: lassoLayer.height / 2
+                        xScale: root.flippedHorizontally ? -1 : 1
+                        yScale: root.flippedVertically ? -1 : 1
+                    }
+                ]
+                z: 30
+
+                Canvas {
+                    id: lassoCanvas
+                    anchors.fill: parent
+                    renderStrategy: Canvas.Threaded
+                    onPaint: {
+                        const context = getContext("2d")
+                        context.clearRect(0, 0, width, height)
+                        const points = root.lassoDrawing ? root.activeLassoPoints : root.lassoPoints
+                        if (!points || points.length < 2) return
+                        context.save()
+                        context.lineWidth = 2
+                        context.lineJoin = "round"
+                        context.lineCap = "round"
+                        context.strokeStyle = "#f7f7f7"
+                        context.fillStyle = "rgba(139, 212, 202, 0.12)"
+                        context.beginPath()
+                        context.moveTo(points[0][0] * width, points[0][1] * height)
+                        for (let index = 1; index < points.length; index++)
+                            context.lineTo(points[index][0] * width, points[index][1] * height)
+                        if (!root.lassoDrawing) {
+                            context.closePath()
+                            context.fill()
+                            context.setLineDash([7, 5])
+                        }
+                        context.stroke()
+                        context.restore()
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: root.activeTool === "lasso"
+                    preventStealing: true
+                    cursorShape: Qt.CrossCursor
+
+                    function pointAt(x, y) {
+                        return [Math.max(0, Math.min(1, x / width)), Math.max(0, Math.min(1, y / height))]
+                    }
+
+                    onPressed: function(mouse) {
+                        root.lassoPoints = []
+                        root.lassoDrawing = true
+                        root.activeLassoPoints = [pointAt(mouse.x, mouse.y)]
+                        lassoCanvas.requestPaint()
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed || root.activeLassoPoints.length >= 6000) return
+                        const next = pointAt(mouse.x, mouse.y)
+                        const previous = root.activeLassoPoints[root.activeLassoPoints.length - 1]
+                        const dx = (next[0] - previous[0]) * width
+                        const dy = (next[1] - previous[1]) * height
+                        if (dx * dx + dy * dy < 2.25) return
+                        const points = root.activeLassoPoints.slice()
+                        points.push(next)
+                        root.activeLassoPoints = points
+                        lassoCanvas.requestPaint()
+                    }
+                    onReleased: {
+                        if (root.activeLassoPoints.length >= 3) root.lassoPoints = root.activeLassoPoints.slice()
+                        root.activeLassoPoints = []
+                        root.lassoDrawing = false
+                        lassoCanvas.requestPaint()
+                    }
+                    onCanceled: {
+                        root.activeLassoPoints = []
+                        root.lassoDrawing = false
+                        lassoCanvas.requestPaint()
+                    }
                 }
             }
         }

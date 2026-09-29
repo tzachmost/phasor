@@ -16,7 +16,7 @@ try:
 except ImportError as error:
     raise unittest.SkipTest(f"Preview export dependencies are not installed: {error}")
 
-from apps.preview.document_ops import export_image, export_pdf, inspect_document, inspect_pdf_forms, merge_pdfs, print_document, sign_pdf
+from apps.preview.document_ops import available_ocr_languages, embed_pdf_text, export_image, export_pdf, extract_image_selection, inspect_document, inspect_pdf_forms, insert_pdf_pages, merge_pdfs, print_document, recognize_image_text, remove_image_background, sign_pdf
 
 
 SIGNING_AVAILABLE = all(importlib.util.find_spec(name) for name in ("pyhanko", "cryptography"))
@@ -40,6 +40,32 @@ class PreviewExportTests(unittest.TestCase):
         frames = [Image.new("RGB", (8, 6), color) for color in ("red", "blue")]
         frames[0].save(source, save_all=True, append_images=frames[1:], duration=100, loop=0)
         return source
+
+    def make_pdf(self, name="source.pdf", pages=("PHASOR PAGE",)):
+        source = self.root / name
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
+        for text in pages:
+            page_canvas.drawString(20, 50, text)
+            page_canvas.showPage()
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        return source
+
+    def fake_ocr_tools(self):
+        def locate(command):
+            return f"/fake/bin/{command}" if command in {"tesseract", "ocrmypdf"} else None
+
+        def run(command, **_options):
+            if "--list-langs" in command:
+                return SimpleNamespace(returncode=0, stdout="List of available languages (1):\neng\n", stderr="")
+            self.assertIn("--output-type", command)
+            self.assertIn("pdf", command)
+            self.assertIn("--redo-ocr", command)
+            Path(command[-1]).write_bytes(Path(command[-2]).read_bytes())
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        return locate, run
 
     def make_form_pdf(self, name="form.pdf"):
         source = self.root / name
@@ -150,13 +176,13 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(result["subject"], "PDF metadata")
         self.assertFalse(result["encrypted"])
 
-    def test_pdf_inspection_reports_encryption_without_unlocking_the_document(self):
+    def test_pdf_inspection_reports_encryption_and_reads_metadata_after_unlocking(self):
         from pypdf import PdfWriter
 
         source = self.root / "encrypted-inspection.pdf"
         writer = PdfWriter()
         writer.add_blank_page(width=200, height=100)
-        writer.encrypt("test password")
+        writer.encrypt("test password", algorithm="AES-256-R5")
         with source.open("wb") as stream:
             writer.write(stream)
 
@@ -165,6 +191,65 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(result["kind"], "pdf")
         self.assertTrue(result["encrypted"])
         self.assertNotIn("page_count", result)
+
+        unlocked = inspect_document(str(source), "test password")
+        self.assertTrue(unlocked["encrypted"])
+        self.assertEqual(unlocked["page_count"], 1)
+        with self.assertRaisesRegex(ValueError, "password is incorrect"):
+            inspect_document(str(source), "wrong password")
+
+    def test_pdf_forms_can_be_inspected_after_unlocking(self):
+        from pypdf import PdfReader, PdfWriter
+
+        source = self.make_form_pdf("password-forms-source.pdf")
+        writer = PdfWriter()
+        writer.append(PdfReader(source))
+        writer.encrypt("forms secret", algorithm="AES-256-R5")
+        encrypted = self.root / "password-forms.pdf"
+        with encrypted.open("wb") as stream:
+            writer.write(stream)
+
+        locked = inspect_pdf_forms(str(encrypted))
+        self.assertTrue(locked["encrypted"])
+        self.assertEqual(locked["fields"], [])
+        unlocked = inspect_pdf_forms(str(encrypted), "forms secret")
+        self.assertTrue(unlocked["encrypted"])
+        self.assertIn("full_name", {field["name"] for field in unlocked["fields"]})
+        with self.assertRaisesRegex(ValueError, "password is incorrect"):
+            inspect_pdf_forms(str(encrypted), "wrong")
+
+    def test_pdf_form_inspection_hides_parent_groups_without_widgets(self):
+        from pypdf import PdfWriter
+        from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, TextStringObject
+
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=200, height=100)
+        parent = DictionaryObject({
+            NameObject("/FT"): NameObject("/Tx"),
+            NameObject("/T"): TextStringObject("person"),
+        })
+        parent_reference = writer._add_object(parent)
+        widget = DictionaryObject({
+            NameObject("/Subtype"): NameObject("/Widget"),
+            NameObject("/T"): TextStringObject("name"),
+            NameObject("/Parent"): parent_reference,
+            NameObject("/Rect"): ArrayObject([NumberObject(10), NumberObject(10), NumberObject(110), NumberObject(30)]),
+        })
+        widget_reference = writer._add_object(widget)
+        parent[NameObject("/Kids")] = ArrayObject([widget_reference])
+        page[NameObject("/Annots")] = ArrayObject([widget_reference])
+        writer._root_object.update({
+            NameObject("/AcroForm"): DictionaryObject({
+                NameObject("/Fields"): ArrayObject([parent_reference]),
+            }),
+        })
+        source = self.root / "nested-form.pdf"
+        with source.open("wb") as stream:
+            writer.write(stream)
+
+        fields = inspect_pdf_forms(str(source))["fields"]
+
+        self.assertEqual([field["name"] for field in fields], ["person.name"])
 
     def make_signature_fixture(self, name="signed.pdf"):
         """Make a compact structural fixture for signature detection."""
@@ -324,6 +409,73 @@ class PreviewExportTests(unittest.TestCase):
             )
         self.assertFalse(output.exists())
 
+    def test_freeform_selection_exports_a_transparent_bounded_png_copy(self):
+        source = self.root / "selection-source.png"
+        image = Image.new("RGBA", (12, 8), (40, 100, 180, 128))
+        image.save(source)
+        original = source.read_bytes()
+        output = self.root / "selection.png"
+
+        result = extract_image_selection(
+            str(source), str(output),
+            {"points": [[0, 0], [1, 0], [0, 1]]},
+        )
+
+        self.assertEqual((result["width"], result["height"]), (12, 8))
+        with Image.open(output) as extracted:
+            self.assertEqual(extracted.mode, "RGBA")
+            self.assertEqual(extracted.getpixel((1, 1)), (40, 100, 180, 128))
+            self.assertEqual(extracted.getpixel((10, 6))[3], 0)
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_freeform_selection_applies_crop_rotation_flips_and_selected_frame(self):
+        source = self.make_animated_image("lasso-animation.gif")
+        output = self.root / "lasso-frame.png"
+
+        result = extract_image_selection(
+            str(source), str(output),
+            {
+                "points": [[0, 0], [1, 0], [1, 1], [0, 1]],
+                "crop": {"x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5},
+                "rotation": 90,
+                "flip_horizontal": True,
+                "frame_index": 1,
+            },
+        )
+
+        self.assertEqual((result["width"], result["height"]), (2, 4))
+        with Image.open(output) as extracted:
+            self.assertEqual(extracted.convert("RGB").getpixel((1, 1)), (0, 0, 255))
+            self.assertEqual(extracted.getchannel("A").getextrema(), (255, 255))
+
+    def test_freeform_selection_rejects_invalid_points_and_source_overwrite(self):
+        source = self.make_image("lasso-invalid.png")
+        output = self.root / "lasso-invalid-output.png"
+        for points in ([], [[0, 0], [0.5, 0.5]], [[0, 0], [0, 0], [1, 1]], [[0, 0], [float("nan"), 1], [1, 0]]):
+            with self.subTest(points=points):
+                with self.assertRaises(ValueError):
+                    extract_image_selection(str(source), str(output), {"points": points})
+                self.assertFalse(output.exists())
+        with self.assertRaisesRegex(ValueError, "original stays unchanged"):
+            extract_image_selection(str(source), str(source), {"points": [[0, 0], [1, 0], [0, 1]]})
+
+    def test_freeform_selection_cli_reads_geometry_from_stdin(self):
+        from apps.preview import document_ops
+
+        source = self.make_image("lasso-stdin.png")
+        output = self.root / "lasso-stdin-output.png"
+        command = ["document_ops.py", "extract-selection", str(source), str(output), "-"]
+        payload = {"points": [[0, 0], [1, 0], [0, 1]]}
+        result_json = io.StringIO()
+
+        with patch("apps.preview.document_ops.sys.stdin", io.StringIO(json.dumps(payload) + "\n")):
+            with redirect_stdout(result_json):
+                exit_code = document_ops.main(command)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(result_json.getvalue())["path"], str(output))
+        self.assertTrue(output.exists())
+
     def test_animated_image_export_writes_the_selected_frame(self):
         source = self.make_animated_image()
         output = self.root / "second-frame.png"
@@ -348,6 +500,141 @@ class PreviewExportTests(unittest.TestCase):
                         {"frame_index": frame_index, "markup": {"version": 1, "kind": "image", "annotations": []}},
                     )
                 self.assertFalse(output.exists())
+
+    def test_image_text_recognition_uses_current_crop_rotation_flip_and_selected_frame(self):
+        source = self.make_image("ocr-image.png")
+        observed = {}
+
+        def run(command, **_options):
+            if "--list-langs" in command:
+                return SimpleNamespace(returncode=0, stdout="List of available languages (1):\neng\n", stderr="")
+            with Image.open(command[1]) as prepared:
+                observed["size"] = prepared.size
+                observed["pixel"] = prepared.convert("RGB").getpixel((0, 0))
+            self.assertEqual(command[-4:], ["-l", "eng", "--psm", "3"])
+            return SimpleNamespace(returncode=0, stdout="PHASOR OCR SAMPLE\n", stderr="")
+
+        original = source.read_bytes()
+        with patch("apps.preview.document_ops.shutil.which", return_value="/fake/tesseract"):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=run):
+                result = recognize_image_text(
+                    str(source),
+                    {
+                        "language": "eng",
+                        "crop": {"x": 0.2, "y": 0.1, "width": 0.5, "height": 0.8},
+                        "rotation": 90,
+                        "flip_horizontal": True,
+                    },
+                )
+
+        self.assertEqual(result["text"], "PHASOR OCR SAMPLE")
+        self.assertEqual(observed["size"], (8, 10))
+        self.assertEqual(observed["pixel"], (255, 255, 255))
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_image_text_recognition_rejects_uninstalled_or_malformed_languages(self):
+        source = self.make_image("ocr-language.png")
+
+        with patch("apps.preview.document_ops.shutil.which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "needs Tesseract"):
+                available_ocr_languages()
+
+        def run(_command, **_options):
+            return SimpleNamespace(returncode=0, stdout="List of available languages (1):\neng\n", stderr="")
+
+        with patch("apps.preview.document_ops.shutil.which", return_value="/fake/tesseract"):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=run):
+                with self.assertRaisesRegex(ValueError, "language codes"):
+                    recognize_image_text(str(source), {"language": "eng;bad"})
+
+    def test_ocr_language_list_omits_orientation_only_data(self):
+        def run(_command, **_options):
+            return SimpleNamespace(
+                returncode=0,
+                stdout="List of available languages (3):\neng\nosd\npol\n",
+                stderr="",
+            )
+
+        with patch("apps.preview.document_ops.shutil.which", return_value="/fake/tesseract"):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=run):
+                self.assertEqual(available_ocr_languages()["languages"], ["eng", "pol"])
+
+    def test_image_recognition_cli_reads_options_from_stdin(self):
+        from apps.preview import document_ops
+
+        source = self.make_image("ocr-cli.png")
+        command = ["document_ops.py", "recognize-image", str(source), "-"]
+        output = io.StringIO()
+        with patch("apps.preview.document_ops.recognize_image_text", return_value={"ok": True, "text": "local"}) as recognize:
+            with patch("apps.preview.document_ops.sys.stdin", io.StringIO('{"language":"eng"}\n')):
+                with redirect_stdout(output):
+                    exit_code = document_ops.main(command)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(output.getvalue())["text"], "local")
+        recognize.assert_called_once_with(str(source), {"language": "eng"})
+
+    def test_background_removal_writes_a_transparent_transformed_png_copy(self):
+        source = self.root / "background-source.png"
+        Image.new("RGB", (6, 4), "white").save(source)
+        original = source.read_bytes()
+        output = self.root / "background-removed.png"
+        session_value = object()
+        session_models = []
+        removal_options = []
+
+        def new_session(model):
+            session_models.append(model)
+            return session_value
+
+        def remove(image, session, decontaminate):
+            removal_options.append((session, decontaminate, image.mode, image.size))
+            result = image.copy().convert("RGBA")
+            alpha = Image.new("L", result.size, 255)
+            for x in range(3, result.width):
+                for y in range(result.height):
+                    alpha.putpixel((x, y), 0)
+            result.putalpha(alpha)
+            return result
+
+        with patch("apps.preview.document_ops._background_removal_stack", return_value=(new_session, remove)):
+            result = remove_image_background(
+                str(source),
+                str(output),
+                {
+                    "crop": {"x": 1 / 3, "y": 0, "width": 0.5, "height": 1},
+                    "rotation": 90,
+                    "flip_horizontal": True,
+                    "markup": {"version": 1, "kind": "image", "annotations": []},
+                },
+            )
+
+        with Image.open(output) as exported:
+            exported.load()
+            self.assertEqual(exported.format, "PNG")
+            self.assertEqual(exported.size, (4, 3))
+            self.assertEqual(exported.mode, "RGBA")
+            self.assertEqual(exported.getchannel("A").getextrema(), (0, 255))
+        self.assertEqual(session_models, ["u2net"])
+        self.assertEqual(removal_options, [(session_value, True, "RGBA", (6, 4))])
+        self.assertEqual(source.read_bytes(), original)
+        self.assertTrue(result["transparent"])
+
+    def test_background_removal_cli_reads_options_from_stdin(self):
+        source = self.make_image("background-cli-source.png")
+        output = self.root / "background-cli-output.png"
+        options = {"markup": {"version": 1, "kind": "image", "annotations": []}}
+        command = ["document_ops.py", "background", str(source), str(output), "-"]
+        output_json = io.StringIO()
+        fake_stack = (lambda model: object(), lambda image, **kwargs: image)
+
+        with patch("apps.preview.document_ops._background_removal_stack", return_value=fake_stack):
+            with patch("apps.preview.document_ops.sys.stdin", io.StringIO(json.dumps(options) + "\n")):
+                with redirect_stdout(output_json):
+                    status = importlib.import_module("apps.preview.document_ops").main(command)
+
+        self.assertEqual(status, 0)
+        self.assertTrue(json.loads(output_json.getvalue())["transparent"])
 
     def test_image_highlights_blend_without_making_pixels_transparent(self):
         source = self.root / "transparent.png"
@@ -450,6 +737,118 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(result["pages"], 2)
         self.assertEqual(PdfReader(source).pages[0].rotation, 0)
 
+    def test_searchable_pdf_copy_applies_pending_page_operations_and_keeps_source(self):
+        source = self.make_pdf(pages=("FIRST OCR PAGE", "SECOND OCR PAGE"))
+        original = source.read_bytes()
+        output = self.root / "searchable-copy.pdf"
+        locate, run = self.fake_ocr_tools()
+
+        with patch("apps.preview.document_ops.shutil.which", side_effect=locate):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=run):
+                result = embed_pdf_text(
+                    str(source),
+                    str(output),
+                    {"language": "eng", "markup": {"version": 1, "kind": "pdf", "pages": {}, "page_order": [1, 0]}},
+                )
+
+        reader = PdfReader(output)
+        self.assertEqual(result["pages"], 2)
+        self.assertIn("SECOND OCR PAGE", reader.pages[0].extract_text())
+        self.assertIn("FIRST OCR PAGE", reader.pages[1].extract_text())
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_searchable_pdf_copy_unlocks_with_stdin_password_and_never_passes_it_to_ocr(self):
+        from pypdf import PdfWriter
+
+        source = self.make_pdf("protected-ocr.pdf", pages=("PROTECTED PAGE",))
+        writer = PdfWriter(clone_from=source)
+        writer.encrypt("secret OCR password", algorithm="AES-256")
+        with source.open("wb") as stream:
+            writer.write(stream)
+        original = source.read_bytes()
+        output = self.root / "unlocked-searchable.pdf"
+        locate, base_run = self.fake_ocr_tools()
+        observed_command = {}
+
+        def run(command, **options):
+            if "--list-langs" not in command:
+                observed_command["args"] = list(command)
+                observed_command["encrypted"] = PdfReader(command[-2]).is_encrypted
+            return base_run(command, **options)
+
+        with patch("apps.preview.document_ops.shutil.which", side_effect=locate):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=run):
+                result = embed_pdf_text(
+                    str(source), str(output), {"language": "eng", "source_password": "secret OCR password"}
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(observed_command["encrypted"])
+        self.assertNotIn("secret OCR password", observed_command["args"])
+        self.assertEqual(PdfReader(output).pages[0].extract_text().strip(), "PROTECTED PAGE")
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_searchable_pdf_cli_reads_password_and_markup_from_stdin(self):
+        from apps.preview import document_ops
+
+        source = self.make_pdf("ocr-stdin.pdf")
+        output = self.root / "ocr-stdin-output.pdf"
+        command = ["document_ops.py", "searchable-pdf", str(source), str(output), "-"]
+        options = {"source_password": "stdin secret", "markup": {"version": 1, "kind": "pdf", "pages": {}}}
+        result_json = io.StringIO()
+        with patch("apps.preview.document_ops.embed_pdf_text", return_value={"ok": True, "pages": 1}) as embed:
+            with patch("apps.preview.document_ops.sys.stdin", io.StringIO(json.dumps(options) + "\n")):
+                with redirect_stdout(result_json):
+                    exit_code = document_ops.main(command)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(result_json.getvalue())["pages"], 1)
+        self.assertNotIn("stdin secret", command)
+        embed.assert_called_once_with(str(source), str(output), options)
+
+    def test_searchable_pdf_copy_requires_optional_backend_and_rejects_overwrite(self):
+        source = self.make_pdf("ocr-guard.pdf")
+        with patch("apps.preview.document_ops.shutil.which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "needs Tesseract"):
+                embed_pdf_text(str(source), str(self.root / "result.pdf"), {})
+
+        with self.assertRaisesRegex(ValueError, "original stays unchanged"):
+            embed_pdf_text(str(source), str(source), {})
+
+    def test_pdf_export_draws_text_anchors_and_keeps_note_as_pdf_annotation(self):
+        source = self.root / "text-anchors.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(240, 160))
+        page_canvas.drawString(24, 112, "Anchored source text")
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        output = self.root / "text-anchors-export.pdf"
+        selection_rect = [0.1, 0.25, 0.76, 0.34]
+        markup = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {
+                "0": [
+                    {"type": "text_highlight", "quote": "Anchored source text", "rects": [selection_rect], "color": "#f3c969"},
+                    {"type": "underline", "quote": "Anchored source text", "rects": [selection_rect], "color": "#8bd5ca"},
+                    {"type": "strike", "quote": "Anchored source text", "rects": [selection_rect], "color": "#ed8796"},
+                    {"type": "note", "quote": "Anchored source text", "rects": [selection_rect], "note": "Verify the source citation.", "color": "#f3c969"},
+                ]
+            },
+        }
+
+        export_pdf(str(source), str(output), {"markup": markup})
+
+        page = PdfReader(output).pages[0]
+        self.assertIn("Anchored source text", page.extract_text())
+        self.assertTrue(page.get_contents().get_data())
+        notes = [annotation.get_object() for annotation in page.get("/Annots", [])]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0].get("/Subtype"), "/Text")
+        self.assertEqual(notes[0].get("/Contents"), "Verify the source citation.")
+        self.assertEqual(int(notes[0].get("/F")), 4)
+        self.assertGreater(float(notes[0]["/Rect"][2]), float(notes[0]["/Rect"][0]))
+
     def test_pdf_export_can_exclude_pages(self):
         source = self.root / "source.pdf"
         buffer = io.BytesIO()
@@ -470,6 +869,201 @@ class PreviewExportTests(unittest.TestCase):
         reader = PdfReader(output)
         self.assertEqual(len(reader.pages), 1)
         self.assertIn("KEEP THIS PAGE", reader.pages[0].extract_text())
+
+    def test_pdf_page_insertion_adds_a_blank_to_a_prepared_copy(self):
+        source = self.root / "insert-blank-source.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
+        page_canvas.drawString(20, 50, "FIRST PAGE")
+        page_canvas.showPage()
+        page_canvas.drawString(20, 50, "SECOND PAGE")
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        original = source.read_bytes()
+        output = self.root / "insert-blank-copy.pdf"
+        markup = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {
+                "1": [{"type": "text", "x": 0.1, "y": 0.5, "text": "Editable work is preserved visually", "color": "#102030"}]
+            },
+            "page_order": [1, 0],
+            "page_rotations": {"1": 90},
+        }
+
+        result = insert_pdf_pages(
+            str(source),
+            "",
+            str(output),
+            {"markup": markup, "insert_at": 1},
+        )
+
+        reader = PdfReader(output)
+        self.assertEqual(result["pages"], 3)
+        self.assertEqual(result["blank_pages"], 1)
+        self.assertEqual(len(reader.pages), 3)
+        self.assertIn("SECOND PAGE", reader.pages[0].extract_text())
+        self.assertIn("Editable work is preserved visually", reader.pages[0].extract_text())
+        self.assertEqual(reader.pages[0].rotation, 90)
+        self.assertEqual(reader.pages[1].extract_text().strip(), "")
+        self.assertIn("FIRST PAGE", reader.pages[2].extract_text())
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_pdf_page_insertion_imports_selected_pages_and_namespaces_forms(self):
+        current = self.make_form_pdf("current-pages.pdf")
+        imported = self.make_form_pdf("imported-pages.pdf")
+        current_bytes = current.read_bytes()
+        imported_bytes = imported.read_bytes()
+        output = self.root / "inserted-pages.pdf"
+
+        result = insert_pdf_pages(
+            str(current),
+            str(imported),
+            str(output),
+            {
+                "markup": {
+                    "version": 1,
+                    "kind": "pdf",
+                    "pages": {},
+                    "form_values": {"full_name": "Ada Lovelace"},
+                },
+                "pages": "1",
+                "insert_at": 1,
+            },
+        )
+
+        reader = PdfReader(output)
+        fields = reader.get_fields()
+        self.assertEqual(result["pages"], 2)
+        self.assertEqual(result["imported_pages"], 1)
+        self.assertEqual(len(reader.pages), 2)
+        self.assertEqual(fields["full_name"]["/V"], "Ada Lovelace")
+        self.assertTrue(any(name.endswith(".full_name") for name in fields))
+        self.assertEqual(current.read_bytes(), current_bytes)
+        self.assertEqual(imported.read_bytes(), imported_bytes)
+
+    def test_pdf_page_insertion_requires_new_password_for_protected_imports(self):
+        from pypdf import PdfWriter
+
+        current = self.root / "current.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
+        page_canvas.drawString(20, 50, "CURRENT")
+        page_canvas.save()
+        current.write_bytes(buffer.getvalue())
+        imported = self.root / "protected-import.pdf"
+        encrypted_writer = PdfWriter()
+        encrypted_writer.add_page(PdfReader(io.BytesIO(buffer.getvalue())).pages[0])
+        encrypted_writer.encrypt("import password", algorithm="AES-256")
+        with imported.open("wb") as stream:
+            encrypted_writer.write(stream)
+        imported_bytes = imported.read_bytes()
+        output = self.root / "protected-inserted.pdf"
+        base_options = {
+            "markup": {"version": 1, "kind": "pdf", "pages": {}},
+            "pages": "1",
+            "insert_at": 1,
+            "import_password": "import password",
+        }
+
+        with self.assertRaisesRegex(ValueError, "Set a password"):
+            insert_pdf_pages(str(current), str(imported), str(output), base_options)
+
+        result = insert_pdf_pages(
+            str(current), str(imported), str(output), {**base_options, "protect_password": "output password"}
+        )
+        reader = PdfReader(output)
+        self.assertTrue(result["encrypted"])
+        self.assertEqual(int(reader.decrypt("output password")), 2)
+        self.assertIn("CURRENT", reader.pages[0].extract_text())
+        self.assertEqual(len(reader.pages), 2)
+        self.assertEqual(imported.read_bytes(), imported_bytes)
+
+    def test_pdf_page_insertion_cli_reads_passwords_from_stdin(self):
+        from apps.preview import document_ops
+
+        source = self.make_form_pdf("stdin-insert-current.pdf")
+        imported = self.make_form_pdf("stdin-insert-import.pdf")
+        output = self.root / "stdin-insert-output.pdf"
+        secret = "stdin output secret"
+        command = ["document_ops.py", "insert", str(source), str(imported), str(output), "-"]
+        options = {
+            "markup": {"version": 1, "kind": "pdf", "pages": {}},
+            "pages": "1",
+            "insert_at": 1,
+            "protect_password": secret,
+        }
+        result_json = io.StringIO()
+        with patch("apps.preview.document_ops.sys.stdin", io.StringIO(json.dumps(options) + "\n")):
+            with redirect_stdout(result_json):
+                exit_code = document_ops.main(command)
+
+        self.assertEqual(exit_code, 0)
+        self.assertNotIn(secret, command)
+        self.assertTrue(json.loads(result_json.getvalue())["ok"])
+        self.assertTrue(PdfReader(output).is_encrypted)
+
+    def test_pdf_export_unlocks_protects_and_optimizes_only_a_new_copy(self):
+        from pypdf import PdfReader, PdfWriter
+
+        original = self.make_form_pdf("protected-source.pdf")
+        original_bytes = original.read_bytes()
+        reader = PdfReader(original)
+        encrypted_writer = PdfWriter()
+        encrypted_writer.append(reader)
+        encrypted_writer.encrypt("source secret", algorithm="AES-256-R5")
+        source = self.root / "encrypted-source.pdf"
+        with source.open("wb") as stream:
+            encrypted_writer.write(stream)
+        source_bytes = source.read_bytes()
+        output = self.root / "protected-output.pdf"
+        markup = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {},
+            "form_values": {"full_name": "Ada Lovelace"},
+        }
+
+        result = export_pdf(
+            str(source),
+            str(output),
+            {
+                "markup": markup,
+                "source_password": "source secret",
+                "protect_password": "output secret",
+                "reduce_file_size": True,
+            },
+        )
+
+        exported = PdfReader(output)
+        self.assertTrue(exported.is_encrypted)
+        self.assertEqual(int(exported.decrypt("output secret")), 2)
+        self.assertEqual(exported.get_fields()["full_name"]["/V"], "Ada Lovelace")
+        self.assertTrue(result["encrypted"])
+        self.assertEqual(result["input_size_bytes"], len(source_bytes))
+        self.assertEqual(result["output_size_bytes"], output.stat().st_size)
+        self.assertEqual(original.read_bytes(), original_bytes)
+        self.assertEqual(source.read_bytes(), source_bytes)
+        with self.assertRaisesRegex(ValueError, "password is incorrect"):
+            export_pdf(str(source), str(self.root / "wrong.pdf"), {"source_password": "wrong"})
+        self.assertFalse((self.root / "wrong.pdf").exists())
+
+    def test_pdf_lossless_size_reduction_compresses_content_and_preserves_text(self):
+        source = self.root / "verbose-source.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(400, 400), pageCompression=0)
+        for index in range(1200):
+            page_canvas.drawString(24, 380 - (index % 360), f"Repeated searchable line {index % 8}")
+        page_canvas.save()
+        source.write_bytes(buffer.getvalue())
+        output = self.root / "optimized.pdf"
+
+        result = export_pdf(str(source), str(output), {"reduce_file_size": True})
+
+        self.assertLess(result["output_size_bytes"], result["input_size_bytes"])
+        text = PdfReader(output).pages[0].extract_text()
+        self.assertIn("Repeated searchable line", text)
+        self.assertEqual(PdfReader(source).pages[0].extract_text(), text)
 
     def test_pdf_markup_respects_offset_crop_box(self):
         from pypdf import PdfWriter
@@ -648,6 +1242,27 @@ class PreviewExportTests(unittest.TestCase):
         self.assertNotIn(secret, command)
         self.assertEqual(PdfReader(output).get_fields()["access_code"]["/V"], secret)
 
+    def test_pdf_inspection_cli_reads_password_from_stdin(self):
+        from pypdf import PdfWriter
+        from apps.preview import document_ops
+
+        source = self.root / "stdin-password.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=100)
+        writer.encrypt("stdin PDF secret", algorithm="AES-256-R5")
+        with source.open("wb") as stream:
+            writer.write(stream)
+        command = ["document_ops.py", "inspect", str(source), "-"]
+        output = io.StringIO()
+        payload = {"password": "stdin PDF secret"}
+        with patch("apps.preview.document_ops.sys.stdin", io.StringIO(json.dumps(payload) + "\n")):
+            with redirect_stdout(output):
+                exit_code = document_ops.main(command)
+
+        self.assertEqual(exit_code, 0)
+        self.assertNotIn("stdin PDF secret", command)
+        self.assertEqual(json.loads(output.getvalue())["page_count"], 1)
+
     def test_pdf_signature_markup_exports_as_vector_strokes(self):
         source = self.root / "signature.pdf"
         buffer = io.BytesIO()
@@ -687,6 +1302,7 @@ class PreviewExportTests(unittest.TestCase):
     def test_certificate_signing_creates_visible_incremental_copy_and_valid_signature(self):
         from asn1crypto import x509 as asn1_x509
         from cryptography.hazmat.primitives.serialization import Encoding
+        from pypdf import PdfWriter
         from pyhanko.pdf_utils.reader import PdfFileReader
         from pyhanko.sign.validation import validate_pdf_signature
         from pyhanko_certvalidator import ValidationContext
@@ -747,8 +1363,50 @@ class PreviewExportTests(unittest.TestCase):
         signed_reader = PdfReader(output)
         self.assertIn("Keep the original document content", signed_reader.pages[0].extract_text())
 
+        encrypted_writer = PdfWriter()
+        encrypted_writer.append(PdfReader(source))
+        encrypted_writer.encrypt("source PDF password", algorithm="AES-256-R5")
+        encrypted_source = self.root / "encrypted-signing-source.pdf"
+        with encrypted_source.open("wb") as stream:
+            encrypted_writer.write(stream)
+        encrypted_output = self.root / "encrypted-signed.pdf"
+        encrypted_result = sign_pdf(
+            str(encrypted_source),
+            str(encrypted_output),
+            str(certificate_path),
+            {
+                "page_index": 0,
+                "box": [0.1, 0.1, 0.55, 0.35],
+                "rotation": 0,
+                "reason": "Approved",
+                "location": "Warsaw",
+                "markup": {"version": 1, "kind": "pdf", "pages": {}},
+            },
+            "test password",
+            "source PDF password",
+        )
+        self.assertTrue(encrypted_result["encrypted"])
+        encrypted_reader = PdfReader(encrypted_output)
+        self.assertTrue(encrypted_reader.is_encrypted)
+        encrypted_reader.decrypt("source PDF password")
+        self.assertIn("Keep the original document content", encrypted_reader.pages[0].extract_text())
+        with encrypted_output.open("rb") as stream:
+            signed_encrypted_pdf = PdfFileReader(stream)
+            self.assertNotEqual(signed_encrypted_pdf.decrypt("source PDF password").status.value, 0)
+            self.assertEqual(len(signed_encrypted_pdf.embedded_signatures), 1)
+            encrypted_signature_status = validate_pdf_signature(
+                signed_encrypted_pdf.embedded_signatures[0],
+                signer_validation_context=ValidationContext(
+                    trust_roots=[asn1_x509.Certificate.load(certificate.public_bytes(Encoding.DER))]
+                ),
+            )
+            self.assertTrue(encrypted_signature_status.intact)
+            self.assertTrue(encrypted_signature_status.valid)
+
     @unittest.skipUnless(SIGNING_AVAILABLE, "Optional pyHanko signing dependency is not installed")
     def test_certificate_signing_applies_pending_edits_before_signing(self):
+        from pypdf import PdfWriter
+
         source = self.root / "prepared-source.pdf"
         buffer = io.BytesIO()
         page_canvas = canvas.Canvas(buffer, pagesize=(300, 200))
@@ -787,6 +1445,32 @@ class PreviewExportTests(unittest.TestCase):
         self.assertIn("Prepared note", output_reader.pages[0].extract_text())
         self.assertEqual(len(output_reader.get_fields()), 1)
         self.assertEqual(len(PdfReader(source).get_fields() or {}), 0)
+
+        encrypted_writer = PdfWriter()
+        encrypted_writer.append(PdfReader(source))
+        encrypted_writer.encrypt("source PDF password", algorithm="AES-256-R5")
+        encrypted_source = self.root / "encrypted-prepared-source.pdf"
+        with encrypted_source.open("wb") as stream:
+            encrypted_writer.write(stream)
+        encrypted_output = self.root / "encrypted-prepared-signed.pdf"
+        sign_pdf(
+            str(encrypted_source),
+            str(encrypted_output),
+            str(certificate_path),
+            options,
+            "test password",
+            "source PDF password",
+        )
+        encrypted_result = PdfReader(encrypted_output)
+        self.assertTrue(encrypted_result.is_encrypted)
+        encrypted_result.decrypt("source PDF password")
+        self.assertIn("Before markup", encrypted_result.pages[0].extract_text())
+        self.assertIn("Prepared note", encrypted_result.pages[0].extract_text())
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        with encrypted_output.open("rb") as stream:
+            signed_pdf = PdfFileReader(stream)
+            self.assertNotEqual(signed_pdf.decrypt("source PDF password").status.value, 0)
+            self.assertEqual(len(signed_pdf.embedded_signatures), 1)
 
     @unittest.skipUnless(SIGNING_AVAILABLE, "Optional pyHanko signing dependency is not installed")
     def test_certificate_signing_rejects_wrong_password_and_preserves_existing_signatures(self):
@@ -905,6 +1589,42 @@ class PreviewExportTests(unittest.TestCase):
         self.assertIn("APPENDED PAGE", merged.pages[1].extract_text())
         self.assertEqual(len(PdfReader(first).pages), 2)
 
+    def test_pdf_merge_unlocks_the_current_document_for_a_new_copy(self):
+        from pypdf import PdfWriter
+
+        first = self.root / "encrypted-first.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
+        page_canvas.drawString(20, 50, "UNLOCKED FIRST PAGE")
+        page_canvas.save()
+        buffer.seek(0)
+        writer = PdfWriter()
+        writer.append(PdfReader(buffer))
+        writer.encrypt("merge secret", algorithm="AES-256-R5")
+        with first.open("wb") as stream:
+            writer.write(stream)
+        original = first.read_bytes()
+        second = self.root / "second.pdf"
+        second_canvas = canvas.Canvas(str(second), pagesize=(200, 100))
+        second_canvas.drawString(20, 50, "SECOND PAGE")
+        second_canvas.save()
+        output = self.root / "encrypted-merged.pdf"
+
+        result = merge_pdfs(
+            [str(first), str(second)],
+            str(output),
+            {
+                "source_password": "merge secret",
+                "markup": {"version": 1, "kind": "pdf", "pages": {}},
+            },
+        )
+
+        merged = PdfReader(output)
+        self.assertEqual(result["pages"], 2)
+        self.assertIn("UNLOCKED FIRST PAGE", merged.pages[0].extract_text())
+        self.assertIn("SECOND PAGE", merged.pages[1].extract_text())
+        self.assertEqual(first.read_bytes(), original)
+
     def test_pdf_merge_namespaces_imported_form_fields_and_preserves_values(self):
         first = self.make_form_pdf("form-one.pdf")
         second = self.make_form_pdf("form-two.pdf")
@@ -994,6 +1714,42 @@ class PreviewExportTests(unittest.TestCase):
         self.assertIn(["-P", "1"], [commands[0][i:i + 2] for i in range(len(commands[0]) - 1)])
         self.assertTrue(result["ok"])
         self.assertEqual(result["printer"], "Office")
+
+    def test_print_unlocks_protected_pdf_only_in_the_temporary_copy(self):
+        from pypdf import PdfWriter
+
+        source = self.root / "encrypted-print.pdf"
+        buffer = io.BytesIO()
+        page_canvas = canvas.Canvas(buffer, pagesize=(200, 100))
+        page_canvas.drawString(20, 50, "PRINT PROTECTED CONTENT")
+        page_canvas.save()
+        buffer.seek(0)
+        writer = PdfWriter()
+        writer.append(PdfReader(buffer))
+        writer.encrypt("print secret", algorithm="AES-256-R5")
+        with source.open("wb") as stream:
+            writer.write(stream)
+        original = source.read_bytes()
+
+        def submit(command, **kwargs):
+            prepared = PdfReader(command[-1])
+            self.assertFalse(prepared.is_encrypted)
+            self.assertIn("PRINT PROTECTED CONTENT", prepared.pages[0].extract_text())
+            return SimpleNamespace(returncode=0, stdout="job-locked", stderr="")
+
+        with patch("apps.preview.document_ops.shutil.which", return_value="/usr/bin/lp"):
+            with patch("apps.preview.document_ops.subprocess.run", side_effect=submit):
+                result = print_document(
+                    str(source),
+                    {
+                        "source_password": "print secret",
+                        "markup": {"version": 1, "kind": "pdf", "pages": {}},
+                    },
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["job"], "job-locked")
+        self.assertEqual(source.read_bytes(), original)
 
     def test_print_converts_marked_up_image_to_single_page_pdf(self):
         source = self.make_image()

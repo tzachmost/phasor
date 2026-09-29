@@ -44,7 +44,10 @@ def _validate_annotation(value: Any) -> dict[str, Any]:
         raise ValueError("Each markup item must be an object")
     kind = value.get("type")
     color = value.get("color", "#8bd5ca")
-    if kind not in {"stroke", "signature", "rectangle", "highlight", "text"}:
+    if kind not in {
+        "stroke", "signature", "rectangle", "highlight", "text",
+        "text_highlight", "underline", "strike", "note",
+    }:
         raise ValueError("Unsupported markup type")
     if not isinstance(color, str) or not COLOR_RE.fullmatch(color):
         raise ValueError("Markup color must be a hex color")
@@ -69,7 +72,7 @@ def _validate_annotation(value: Any) -> dict[str, Any]:
             "y2": _coordinate(value.get("y2")),
             "width": _width(value.get("width", 0.006)),
         })
-    else:
+    elif kind == "text":
         text = value.get("text")
         if not isinstance(text, str) or len(text) > 4096:
             raise ValueError("Markup text must be a string up to 4096 characters")
@@ -79,6 +82,27 @@ def _validate_annotation(value: Any) -> dict[str, Any]:
             "text": text,
             "size": _width(value.get("size", 0.038), maximum=0.2),
         })
+    else:
+        quote = value.get("quote")
+        if not isinstance(quote, str) or not quote.strip() or len(quote) > 4096:
+            raise ValueError("A text annotation must include a selected quote up to 4096 characters")
+        rects = value.get("rects")
+        if not isinstance(rects, list) or not rects or len(rects) > 256:
+            raise ValueError("A text annotation must include between one and 256 selection rectangles")
+        normalized_rects: list[list[float]] = []
+        for rect in rects:
+            if not isinstance(rect, list) or len(rect) != 4:
+                raise ValueError("A selection rectangle must contain four coordinates")
+            x1, y1, x2, y2 = (_coordinate(coordinate) for coordinate in rect)
+            if x2 <= x1 or y2 <= y1:
+                raise ValueError("A selection rectangle must have a positive width and height")
+            normalized_rects.append([x1, y1, x2, y2])
+        result.update({"quote": quote, "rects": normalized_rects})
+        if kind == "note":
+            note = value.get("note")
+            if not isinstance(note, str) or not note.strip() or len(note) > 4096:
+                raise ValueError("A note annotation must contain text up to 4096 characters")
+            result["note"] = note
     return result
 
 
@@ -99,7 +123,10 @@ def validate_payload(value: Any) -> dict[str, Any]:
         annotations = value.get("annotations", [])
         if not isinstance(annotations, list) or len(annotations) > MAX_ANNOTATIONS:
             raise ValueError("Image markup has too many annotations")
-        return {"version": 1, "kind": "image", "annotations": [_validate_annotation(item) for item in annotations]}
+        validated = [_validate_annotation(item) for item in annotations]
+        if any(item["type"] in {"text_highlight", "underline", "strike", "note"} for item in validated):
+            raise ValueError("Text-anchored annotations are supported only for PDF markup")
+        return {"version": 1, "kind": "image", "annotations": validated}
     if kind == "pdf":
         pages = value.get("pages", {})
         if not isinstance(pages, dict) or len(pages) > 20000:

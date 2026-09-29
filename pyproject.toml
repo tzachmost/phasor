@@ -7,7 +7,8 @@ license = { text = "MIT" }
 dependencies = []
 
 [project.optional-dependencies]
-preview = ["Pillow>=10", "pypdf>=4.2", "reportlab>=4", "pyHanko>=0.36.2,<0.38"]
+preview = ["Pillow>=10", "pypdf>=5.7.0", "reportlab>=4", "cryptography>=41", "pyHanko>=0.36.2,<0.38"]
+background-removal = ["rembg[cpu]>=2.0.85,<3; python_version < '3.14'"]
 
 [tool.unittest]
 start-directory = "tests"

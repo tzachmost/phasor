@@ -56,12 +56,15 @@ The 1.0 checklist is complete. Submitting the stable Arch recipe to the AUR is a
 The first Preview milestone is complete. Continue toward a broader document and image workspace, using the [Apple Preview guide](https://support.apple.com/en-gb/guide/preview/welcome/mac) as a feature reference while keeping Phasor's Wayland and sidecar-based workflow.
 
 - [x] Browse embedded PDF bookmarks in a Contents sidebar and jump to their destinations.
-- [ ] Add single-page, continuous-scroll, and two-page reading layouts.
-- [ ] Add and move individual PDF pages, including blank pages and pages selected from another open document.
-- [ ] Add text-anchored highlighting, underline, strike-through, and note annotations.
+- [x] Add single-page, continuous-scroll, and two-page reading layouts.
+- [x] Add and move individual PDF pages, including blank pages and pages selected from another open document.
+- [x] Add text-anchored highlighting, underline, strike-through, and note annotations.
 - [x] Add a document information panel for PDF metadata and image dimensions, format, and available image metadata.
-- [ ] Add PDF password entry/protection and file-size reduction with explicit copy-based export.
+- [x] Add PDF password entry/protection and file-size reduction with explicit copy-based export.
 - [x] Flip images horizontally or vertically.
-- [ ] Add background removal.
+- [x] Add background removal as an optional local CPU feature that saves a transparent PNG copy.
+- [x] Recognize and copy text from images locally, and add or refresh searchable text layers in scanned PDF copies.
 - [x] Browse animated image frames and export or print a selected frame.
-- [ ] Exercise Preview with complex public forms, outlines, signed files, large scans, and real printer queues.
+- [x] Exercise Preview with a public multi-field form, a bookmarked and digitally signed PDF, a 96-page annual report, and a 600-dpi scan.
+- [x] Extract freeform selections from images into transparent PNG copies.
+- [ ] Exercise printing against a configured CUPS printer queue.

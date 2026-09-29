@@ -5,6 +5,15 @@ SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 PHASOR_PREVIEW_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
 export PHASOR_PREVIEW_ROOT
 
+if [[ -z "${PHASOR_PREVIEW_BG_PYTHON:-}" ]]; then
+    PHASOR_PREVIEW_BG_VENV="${PHASOR_PREVIEW_BG_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/phasor-preview/background-removal}"
+    if [[ -x "$PHASOR_PREVIEW_BG_VENV/bin/python" ]]; then
+        export PHASOR_PREVIEW_BG_PYTHON="$PHASOR_PREVIEW_BG_VENV/bin/python"
+    elif command -v phasor-preview-bg-python >/dev/null 2>&1; then
+        export PHASOR_PREVIEW_BG_PYTHON="$(command -v phasor-preview-bg-python)"
+    fi
+fi
+
 if [[ $# -gt 0 ]]; then
     if [[ "$1" == file://* ]]; then
         export PHASOR_PREVIEW_FILE="$1"

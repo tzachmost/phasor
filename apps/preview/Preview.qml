@@ -37,6 +37,7 @@ ApplicationWindow {
     property bool markupReady: true
     property bool deferredMarkupSave: false
     property string pendingFileToOpen: ""
+    property string pendingFilePassword: ""
     property var printerNames: []
     property string defaultPrinter: ""
     property string printerStatus: ""
@@ -50,6 +51,21 @@ ApplicationWindow {
     property var documentInfo: ({})
     property string infoLoadPath: ""
     property bool infoReady: true
+    property string pdfPassword: ""
+    property bool pdfIsPasswordProtected: false
+    property bool pdfPasswordCancelled: false
+    property string pdfPasswordMessage: ""
+    property string exportPasswordPending: ""
+    property bool exportReduceSizePending: false
+    property string exportDialogMessage: ""
+    property string pageImportSourcePath: ""
+    property var pageInsertOptionsPending: ({})
+    property string pageInsertOutputPasswordPending: ""
+    property var ocrLanguages: []
+    property string ocrLanguage: "eng"
+    property string ocrIntent: ""
+    property string ocrRecognizedText: ""
+    property string ocrRecognizedFileName: ""
     readonly property var documentInfoRows: {
         const info = root.documentInfo || ({})
         if (info.error) return [{ label: "Status", value: info.error }]
@@ -82,8 +98,10 @@ ApplicationWindow {
         return rows.filter(function(row) { return row.value !== undefined && row.value !== null && String(row.value).length > 0 })
     }
     property var pendingTextPosition: ({ x: 0, y: 0 })
+    property var pendingTextNote: ({ quote: "", rects: [], pageIndex: -1 })
     property string helperPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/markup_store.py"
     property string documentOpsPath: Quickshell.env("PHASOR_PREVIEW_ROOT") + "/apps/preview/document_ops.py"
+    property string backgroundRemovalPython: String(Quickshell.env("PHASOR_PREVIEW_BG_PYTHON") || "python3")
 
     function pathFromUrl(value) {
         let path = String(value)
@@ -119,7 +137,83 @@ ApplicationWindow {
         if (sourcePath) documentInfoDialog.open()
     }
 
-    function openFile(value) {
+    function requestPdfPassword(message, reopen) {
+        if (!root.isPdf) return
+        if (root.pdfPasswordCancelled && !reopen) return
+        if (reopen) root.pdfPasswordCancelled = false
+        root.pdfIsPasswordProtected = true
+        root.pdfPasswordMessage = message || "Enter the password to unlock this PDF."
+        if (!pdfPasswordDialog.visible) {
+            pdfPasswordInput.clear()
+            pdfPasswordDialog.open()
+        }
+    }
+
+    function loadPdfDetails() {
+        if (!root.isPdf || !root.sourcePath) return
+        pdfDetailsTimer.restart()
+    }
+
+    function submitPdfPassword() {
+        const password = pdfPasswordInput.text
+        if (password.length === 0) {
+            root.pdfPasswordMessage = "Enter a password to unlock this PDF."
+            return
+        }
+        root.pdfPassword = password
+        root.pdfPasswordCancelled = false
+        pdfPasswordInput.clear()
+        pdfPasswordDialog.close()
+        root.pdfPasswordMessage = ""
+        if (viewerLoader.item && viewerLoader.item.setDocumentPassword)
+            viewerLoader.item.setDocumentPassword(password)
+        root.loadPdfDetails()
+    }
+
+    function cancelPdfPassword() {
+        pdfPasswordInput.clear()
+        root.pdfPasswordMessage = ""
+        root.pdfPasswordCancelled = true
+        root.formsStatus = "This PDF is password protected."
+        root.formsReady = true
+        root.infoReady = true
+        root.continueAfterDocumentReady()
+    }
+
+    function isPdfPasswordError(message) {
+        const value = String(message || "").toLowerCase()
+        return value.indexOf("password") >= 0 || value.indexOf("encrypted") >= 0
+    }
+
+    function handlePdfPasswordError(message) {
+        if (root.pdfPasswordCancelled) {
+            root.formsStatus = "This PDF is password protected."
+            root.formsReady = true
+            root.infoReady = true
+            root.continueAfterDocumentReady()
+            return
+        }
+        root.pdfPassword = ""
+        if (viewerLoader.item && viewerLoader.item.setDocumentPassword)
+            viewerLoader.item.setDocumentPassword("")
+        root.formsReady = false
+        root.infoReady = false
+        root.requestPdfPassword(message || "The PDF password was not accepted. Try again.")
+    }
+
+    function handlePdfLoadFailure(message) {
+        if (root.isPdfPasswordError(message)) {
+            root.handlePdfPasswordError(message)
+            return
+        }
+        root.formsStatus = message || "Could not open this PDF."
+        root.formsReady = true
+        root.documentInfo = { error: message || "Could not read document information" }
+        root.infoReady = true
+        root.continueAfterDocumentReady()
+    }
+
+    function openFile(value, passwordForOpenedPdf) {
         const incoming = String(value || "")
         if (incoming.length === 0) return
         const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(incoming)
@@ -127,6 +221,7 @@ ApplicationWindow {
         const nextSourcePath = pathFromUrl(nextSourceUrl)
         if (sourcePath && (!markupReady || (root.isPdf && !formsReady) || !infoReady)) {
             pendingFileToOpen = nextSourcePath
+            pendingFilePassword = String(passwordForOpenedPdf || "")
             return
         }
         if (sourcePath && (autosaveTimer.running || deferredMarkupSave)) {
@@ -140,6 +235,15 @@ ApplicationWindow {
         signingPasswordPending = ""
         signingOptionsPending = ({})
         signingPageIndex = -1
+        exportOptionsDialog.close()
+        exportFileDialog.close()
+        root.clearExportPending()
+        pdfPasswordDialog.close()
+        pdfPasswordInput.clear()
+        pdfPassword = String(passwordForOpenedPdf || "")
+        pdfPasswordMessage = ""
+        pdfIsPasswordProtected = false
+        pdfPasswordCancelled = false
         sourcePath = nextSourcePath
         sourceUrl = nextSourceUrl
         fileName = nameFromPath(sourcePath)
@@ -154,6 +258,7 @@ ApplicationWindow {
         markupReady = false
         deferredMarkupSave = false
         pendingFileToOpen = ""
+        pendingFilePassword = ""
         activeTool = "select"
         autosaveTimer.stop()
         if (viewerLoader.item && viewerLoader.item.resetDocument) viewerLoader.item.resetDocument()
@@ -163,23 +268,29 @@ ApplicationWindow {
         loadProcess.exec(["python3", helperPath, "load", sourcePath])
         if (isPdf) {
             formsLoadPath = sourcePath
-            formsProcess.exec(["python3", documentOpsPath, "forms", sourcePath])
+            formsStatus = "Loading form fields…"
+            root.loadPdfDetails()
+        } else {
+            infoLoadPath = sourcePath
+            infoProcess.sourcePathAtStart = sourcePath
+            infoProcess.passwordWasProvided = false
+            infoProcess.exec(["python3", documentOpsPath, "inspect", sourcePath])
         }
-        infoLoadPath = sourcePath
-        infoProcess.exec(["python3", documentOpsPath, "inspect", sourcePath])
     }
 
     function continueAfterDocumentReady() {
         if (!markupReady || (root.isPdf && !formsReady) || !infoReady) return
 
         const pending = pendingFileToOpen
+        const pendingPassword = pendingFilePassword
         pendingFileToOpen = ""
+        pendingFilePassword = ""
         if (pending.length > 0 && pending !== sourcePath) {
             if (autosaveTimer.running || deferredMarkupSave) {
                 autosaveTimer.stop()
                 saveMarkup()
             }
-            Qt.callLater(function() { root.openFile(pending) })
+            Qt.callLater(function() { root.openFile(pending, pendingPassword) })
             return
         }
 
@@ -218,12 +329,39 @@ ApplicationWindow {
 
     function openExportDialog() {
         if (!sourcePath || !viewerLoader.item) return
+        exportDialogMessage = ""
+        exportPasswordInput.clear()
+        exportPasswordConfirmInput.clear()
+        protectPdfInput.checked = false
+        reducePdfSizeInput.checked = false
         exportOptionsDialog.open()
     }
 
     function chooseExportDestination() {
+        if (root.isPdf && protectPdfInput.checked) {
+            if (!exportPasswordInput.text) {
+                exportDialogMessage = "Enter a password for the exported PDF."
+                return
+            }
+            if (exportPasswordInput.text !== exportPasswordConfirmInput.text) {
+                exportDialogMessage = "The passwords do not match."
+                return
+            }
+        }
+        root.exportPasswordPending = root.isPdf && protectPdfInput.checked ? exportPasswordInput.text : ""
+        root.exportReduceSizePending = root.isPdf && reducePdfSizeInput.checked
+        exportPasswordInput.clear()
+        exportPasswordConfirmInput.clear()
+        exportDialogMessage = ""
         exportOptionsDialog.close()
         exportFileDialog.open()
+    }
+
+    function clearExportPending() {
+        root.exportPasswordPending = ""
+        root.exportReduceSizePending = false
+        exportPasswordInput.clear()
+        exportPasswordConfirmInput.clear()
     }
 
     function exportTo(value) {
@@ -232,7 +370,11 @@ ApplicationWindow {
         const suffix = root.isPdf ? "pdf" : root.exportFormat.toLowerCase() === "jpeg" ? "jpg" : root.exportFormat.toLowerCase()
         if (!/\.[^/]+$/.test(output)) output += "." + suffix
         const options = { markup: viewerLoader.item.serializeMarkup(true) }
-        if (!root.isPdf) {
+        if (root.isPdf) {
+            options.source_password = root.pdfPassword
+            options.protect_password = root.exportPasswordPending
+            options.reduce_file_size = root.exportReduceSizePending
+        } else {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
             options.frame_index = viewerLoader.item.currentPage || 0
@@ -244,6 +386,7 @@ ApplicationWindow {
             options.quality = imageQualityInput.value
         }
         exportProcess.inputPayload = JSON.stringify(options)
+        root.clearExportPending()
         exportProcess.exec([
             "python3",
             root.documentOpsPath,
@@ -253,6 +396,106 @@ ApplicationWindow {
             "-"
         ])
         saveStatus = "Exporting a copy…"
+    }
+
+    function removeBackgroundTo(value) {
+        if (!root.sourcePath || root.isPdf || root.sourcePath.toLowerCase().endsWith(".svg")
+            || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
+        let output = root.pathFromUrl(value)
+        if (!/\.png$/i.test(output)) output += ".png"
+        const options = {
+            markup: viewerLoader.item.serializeMarkup(true),
+            crop: viewerLoader.item.cropRect || null,
+            rotation: viewerLoader.item.rotation || 0,
+            frame_index: viewerLoader.item.currentPage || 0,
+            flip_horizontal: viewerLoader.item.flippedHorizontally,
+            flip_vertical: viewerLoader.item.flippedVertically
+        }
+        backgroundProcess.failureDetails = ""
+        backgroundProcess.inputPayload = JSON.stringify(options)
+        backgroundProcess.exec([
+            root.backgroundRemovalPython,
+            root.documentOpsPath,
+            "background",
+            root.sourcePath,
+            output,
+            "-"
+        ])
+        saveStatus = "Removing background…"
+    }
+
+    function extractLassoTo(value) {
+        if (!root.sourcePath || root.isPdf || root.sourcePath.toLowerCase().endsWith(".svg")
+            || !viewerLoader.item || !viewerLoader.item.hasLassoSelection || lassoExtractProcess.running) return
+        let output = root.pathFromUrl(value)
+        if (!/\.png$/i.test(output)) output += ".png"
+        const options = {
+            points: viewerLoader.item.lassoPoints,
+            crop: viewerLoader.item.cropRect || null,
+            rotation: viewerLoader.item.rotation || 0,
+            frame_index: viewerLoader.item.currentPage || 0,
+            flip_horizontal: viewerLoader.item.flippedHorizontally,
+            flip_vertical: viewerLoader.item.flippedVertically
+        }
+        lassoExtractProcess.inputPayload = JSON.stringify(options)
+        lassoExtractProcess.exec(["python3", root.documentOpsPath, "extract-selection", root.sourcePath, output, "-"])
+        root.saveStatus = "Extracting freeform selection…"
+    }
+
+    function beginOcr(intent) {
+        if (!root.sourcePath || ocrLanguageProcess.running || imageOcrProcess.running || pdfOcrProcess.running) return
+        if (intent === "image" && root.sourcePath.toLowerCase().endsWith(".svg")) {
+            root.saveStatus = "Text recognition needs a bitmap image."
+            return
+        }
+        root.ocrIntent = intent
+        ocrLanguageProcess.sourcePathAtStart = root.sourcePath
+        ocrLanguageProcess.exec(["python3", root.documentOpsPath, "ocr-languages"])
+        root.saveStatus = "Checking installed OCR languages…"
+    }
+
+    function submitOcrSettings() {
+        root.ocrLanguage = String(ocrLanguageInput.currentText || "")
+        ocrSettingsDialog.close()
+        if (root.ocrIntent === "image") {
+            if (!viewerLoader.item) return
+            const options = {
+                language: root.ocrLanguage,
+                crop: viewerLoader.item.cropRect || null,
+                rotation: viewerLoader.item.rotation || 0,
+                frame_index: viewerLoader.item.currentPage || 0,
+                flip_horizontal: viewerLoader.item.flippedHorizontally,
+                flip_vertical: viewerLoader.item.flippedVertically
+            }
+            root.ocrRecognizedFileName = root.nameFromPath(root.sourcePath)
+            imageOcrProcess.sourcePathAtStart = root.sourcePath
+            imageOcrProcess.inputPayload = JSON.stringify(options)
+            imageOcrProcess.exec(["python3", root.documentOpsPath, "recognize-image", root.sourcePath, "-"])
+            root.saveStatus = "Recognizing image text locally…"
+        } else if (root.ocrIntent === "pdf") {
+            pdfOcrOutputDialog.open()
+        }
+    }
+
+    function embedOcrTextTo(value) {
+        if (!root.sourcePath || !root.isPdf || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
+        let output = root.pathFromUrl(value)
+        if (!/\.pdf$/i.test(output)) output += ".pdf"
+        const options = {
+            language: root.ocrLanguage,
+            source_password: root.pdfPassword,
+            markup: viewerLoader.item.serializeMarkup(true)
+        }
+        pdfOcrProcess.inputPayload = JSON.stringify(options)
+        pdfOcrProcess.exec(["python3", root.documentOpsPath, "searchable-pdf", root.sourcePath, output, "-"])
+        root.saveStatus = "Making searchable PDF copy…"
+    }
+
+    function copyRecognizedText() {
+        if (!root.ocrRecognizedText || copyOcrProcess.running) return
+        copyOcrProcess.inputPayload = root.ocrRecognizedText
+        copyOcrProcess.exec(["wl-copy", "--type", "text/plain;charset=utf-8"])
+        root.saveStatus = "Copied recognized text"
     }
 
     function formValue(field) {
@@ -275,6 +518,73 @@ ApplicationWindow {
     function beginMerge() {
         if (!root.isPdf || !root.sourcePath || !viewerLoader.item || viewerLoader.item.pageCount < 1) return
         mergeInputDialog.open()
+    }
+
+    function beginInsertBlankPage() {
+        if (!root.isPdf || !root.sourcePath || !viewerLoader.item || viewerLoader.item.pageCount < 1) return
+        root.pageImportSourcePath = ""
+        importPageRangeInput.clear()
+        importPdfPasswordInput.clear()
+        outputPdfPasswordInput.text = root.pdfPassword
+        pageInsertionDialog.open()
+    }
+
+    function beginImportPages() {
+        if (!root.isPdf || !root.sourcePath || !viewerLoader.item || viewerLoader.item.pageCount < 1) return
+        root.pageImportSourcePath = ""
+        importPageRangeInput.clear()
+        importPdfPasswordInput.clear()
+        outputPdfPasswordInput.text = root.pdfPassword
+        pageImportFileDialog.open()
+    }
+
+    function preparePageInsertion() {
+        if (!root.isPdf || !root.sourcePath || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
+        if (root.pdfIsPasswordProtected && outputPdfPasswordInput.text.length === 0) {
+            pageInsertionMessage.text = "Choose a password to protect the new PDF copy."
+            pageInsertionMessage.visible = true
+            return
+        }
+        root.pageInsertOutputPasswordPending = outputPdfPasswordInput.text
+        root.pageInsertOptionsPending = {
+            markup: viewerLoader.item.serializeMarkup(true),
+            source_password: root.pdfPassword,
+            import_password: importPdfPasswordInput.text,
+            protect_password: outputPdfPasswordInput.text,
+            pages: importPageRangeInput.text.trim(),
+            insert_at: viewerLoader.item.currentPage + 1
+        }
+        pageInsertionMessage.visible = false
+        pageInsertionDialog.close()
+        pageInsertOutputDialog.open()
+    }
+
+    function insertPagesTo(value) {
+        if (!root.sourcePath || !viewerLoader.item || Object.keys(root.pageInsertOptionsPending).length === 0) return
+        let output = root.pathFromUrl(value)
+        if (!/\.pdf$/i.test(output)) output += ".pdf"
+        pageInsertProcess.inputPayload = JSON.stringify(root.pageInsertOptionsPending)
+        pageInsertProcess.sourcePathAtStart = root.sourcePath
+        pageInsertProcess.exec([
+            "python3",
+            root.documentOpsPath,
+            "insert",
+            root.sourcePath,
+            root.pageImportSourcePath,
+            output,
+            "-"
+        ])
+        root.saveStatus = root.pageImportSourcePath ? "Inserting pages into a new PDF copy…" : "Adding a blank page to a new PDF copy…"
+    }
+
+    function cancelPageInsertion() {
+        root.pageInsertOptionsPending = ({})
+        root.pageInsertOutputPasswordPending = ""
+        root.pageImportSourcePath = ""
+        importPageRangeInput.clear()
+        importPdfPasswordInput.clear()
+        outputPdfPasswordInput.clear()
+        pageInsertionMessage.visible = false
     }
 
     function beginCertificateSigning() {
@@ -373,7 +683,9 @@ ApplicationWindow {
             copies: copyInput.value,
             pages: pageRangeInput.text.trim()
         }
-        if (!root.isPdf) {
+        if (root.isPdf) {
+            options.source_password = root.pdfPassword
+        } else {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
             options.frame_index = viewerLoader.item.currentPage || 0
@@ -394,6 +706,29 @@ ApplicationWindow {
         if (viewerLoader.item && viewerLoader.item.addText) {
             viewerLoader.item.addText(pendingTextPosition.x, pendingTextPosition.y, text)
         }
+    }
+
+    function addTextAnnotationTool(tool) {
+        if (!viewerLoader.item || !root.isPdf) return
+        if (viewerLoader.item.readingLayout === "continuous") viewerLoader.item.setReadingLayout("single")
+        root.activeTool = tool
+    }
+
+    function saveTextNote(text) {
+        if (!viewerLoader.item || !viewerLoader.item.addTextAnchoredAnnotation) return
+        const note = String(text || "")
+        if (!note.trim()) {
+            saveStatus = "Write a note before adding it."
+            return
+        }
+        if (note.length > 4096) {
+            saveStatus = "Keep PDF notes to 4096 characters or fewer."
+            return
+        }
+        viewerLoader.item.addTextAnchoredAnnotation(
+            "note", root.pendingTextNote.quote, root.pendingTextNote.rects,
+            root.pendingTextNote.pageIndex, note
+        )
     }
 
     component ToolAction: Button {
@@ -438,6 +773,34 @@ ApplicationWindow {
             : root.exportFormat === "JPEG" ? ["JPEG image (*.jpg *.jpeg)"]
             : [root.exportFormat + " image (*." + (root.exportFormat === "TIFF" ? "tif *.tiff" : root.exportFormat.toLowerCase()) + ")"]
         onAccepted: root.exportTo(selectedFile)
+        onRejected: root.clearExportPending()
+    }
+
+    FileDialog {
+        id: backgroundRemovalFileDialog
+        title: "Save image with transparent background"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "png"
+        nameFilters: ["PNG image (*.png)"]
+        onAccepted: root.removeBackgroundTo(selectedFile)
+    }
+
+    FileDialog {
+        id: lassoExtractFileDialog
+        title: "Save extracted image selection"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "png"
+        nameFilters: ["PNG image (*.png)"]
+        onAccepted: root.extractLassoTo(selectedFile)
+    }
+
+    FileDialog {
+        id: pdfOcrOutputDialog
+        title: "Save searchable PDF copy"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: ["PDF document (*.pdf)"]
+        onAccepted: root.embedOcrTextTo(selectedFile)
     }
 
     FileDialog {
@@ -455,6 +818,31 @@ ApplicationWindow {
         defaultSuffix: "pdf"
         nameFilters: ["PDF document (*.pdf)"]
         onAccepted: root.mergeTo(selectedFile)
+    }
+
+    FileDialog {
+        id: pageImportFileDialog
+        title: "Choose another PDF document"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["PDF documents (*.pdf)"]
+        onAccepted: {
+            root.pageImportSourcePath = root.pathFromUrl(selectedFile)
+            importPageRangeInput.clear()
+            importPdfPasswordInput.clear()
+            outputPdfPasswordInput.text = root.pdfPassword
+            pageInsertionMessage.visible = false
+            pageInsertionDialog.open()
+        }
+    }
+
+    FileDialog {
+        id: pageInsertOutputDialog
+        title: "Save PDF with inserted pages"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: ["PDF document (*.pdf)"]
+        onAccepted: root.insertPagesTo(selectedFile)
+        onRejected: root.cancelPageInsertion()
     }
 
     FileDialog {
@@ -500,6 +888,36 @@ ApplicationWindow {
         function onDigitalSignatureBoxRequested(pageIndex, x1, y1, x2, y2, rotation) {
             root.collectSignatureBox(pageIndex, x1, y1, x2, y2, rotation)
         }
+        function onPasswordRequired() {
+            root.requestPdfPassword("Enter the password to unlock this PDF.")
+        }
+        function onDocumentLoadFailed(message) {
+            root.handlePdfLoadFailure(message)
+        }
+    }
+
+    Timer {
+        id: pdfDetailsTimer
+        interval: 80
+        repeat: false
+        onTriggered: {
+            if (formsProcess.running || infoProcess.running) {
+                restart()
+                return
+            }
+            if (!root.isPdf || !root.sourcePath) return
+            root.formsReady = false
+            root.infoReady = false
+            root.formsStatus = "Loading form fields…"
+            formsProcess.sourcePathAtStart = root.sourcePath
+            formsProcess.passwordWasProvided = root.pdfPassword.length > 0
+            formsProcess.inputPayload = JSON.stringify({ password: root.pdfPassword })
+            formsProcess.exec(["python3", root.documentOpsPath, "forms", root.sourcePath, "-"])
+            infoProcess.sourcePathAtStart = root.sourcePath
+            infoProcess.passwordWasProvided = root.pdfPassword.length > 0
+            infoProcess.inputPayload = JSON.stringify({ password: root.pdfPassword })
+            infoProcess.exec(["python3", root.documentOpsPath, "inspect", root.sourcePath, "-"])
+        }
     }
 
     Process {
@@ -528,11 +946,41 @@ ApplicationWindow {
     Process {
         id: formsProcess
         command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        property string sourcePathAtStart: ""
+        property bool passwordWasProvided: false
+        onStarted: {
+            formsProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
         stdout: StdioCollector {
             onStreamFinished: {
-                if (root.formsLoadPath !== root.sourcePath) return
+                if (formsProcess.sourcePathAtStart !== root.sourcePath) return
                 try {
                     const result = JSON.parse(text)
+                    if (result.error) {
+                        root.formFields = []
+                        root.formsStatus = result.error
+                        if (root.isPdfPasswordError(result.error)) root.handlePdfPasswordError(result.error)
+                        else root.formsReady = true
+                        root.continueAfterDocumentReady()
+                        return
+                    }
+                    if (result.encrypted && !formsProcess.passwordWasProvided) {
+                        root.pdfIsPasswordProtected = true
+                        root.formsStatus = "This PDF is password protected."
+                        if (root.pdfPasswordCancelled) {
+                            root.formsReady = true
+                            root.continueAfterDocumentReady()
+                            return
+                        }
+                        root.formsReady = false
+                        if (root.pdfPassword.length > 0) root.loadPdfDetails()
+                        else root.requestPdfPassword("Enter the password to unlock this PDF.")
+                        return
+                    }
                     root.formFields = result.fields || []
                     root.formsStatus = result.error
                         || (root.formFields.length > 0 ? root.formFields.length + " fields found" : "This PDF has no editable form fields.")
@@ -543,6 +991,7 @@ ApplicationWindow {
                     root.formsStatus = "Could not read PDF form fields"
                     root.formsReady = true
                 }
+                formsProcess.passwordWasProvided = false
                 root.continueAfterDocumentReady()
             }
         }
@@ -552,15 +1001,47 @@ ApplicationWindow {
     Process {
         id: infoProcess
         command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        property string sourcePathAtStart: ""
+        property bool passwordWasProvided: false
+        onStarted: {
+            infoProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
         stdout: StdioCollector {
             onStreamFinished: {
-                if (root.infoLoadPath !== root.sourcePath) return
+                if (infoProcess.sourcePathAtStart && infoProcess.sourcePathAtStart !== root.sourcePath) return
                 try {
-                    root.documentInfo = JSON.parse(text)
+                    const result = JSON.parse(text)
+                    if (result.error) {
+                        root.documentInfo = { error: result.error }
+                        if (root.isPdfPasswordError(result.error)) root.handlePdfPasswordError(result.error)
+                        else root.infoReady = true
+                        root.continueAfterDocumentReady()
+                        return
+                    }
+                    if (root.isPdf && result.encrypted && result.page_count === undefined
+                        && !infoProcess.passwordWasProvided) {
+                        root.pdfIsPasswordProtected = true
+                        root.documentInfo = result
+                        if (root.pdfPasswordCancelled) {
+                            root.infoReady = true
+                            root.continueAfterDocumentReady()
+                            return
+                        }
+                        root.infoReady = false
+                        if (root.pdfPassword.length > 0) root.loadPdfDetails()
+                        else root.requestPdfPassword("Enter the password to unlock this PDF.")
+                        return
+                    }
+                    root.documentInfo = result
                 } catch (error) {
                     root.documentInfo = ({ error: "Could not read document information" })
                 }
                 root.infoReady = true
+                infoProcess.passwordWasProvided = false
                 root.continueAfterDocumentReady()
             }
         }
@@ -586,6 +1067,102 @@ ApplicationWindow {
     }
 
     Process {
+        id: ocrLanguageProcess
+        command: ["python3"]
+        property string sourcePathAtStart: ""
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (ocrLanguageProcess.sourcePathAtStart !== root.sourcePath) return
+                try {
+                    const result = JSON.parse(text)
+                    if (result.error || !Array.isArray(result.languages) || result.languages.length === 0) {
+                        root.saveStatus = result.error || "No OCR language data is installed."
+                        return
+                    }
+                    root.ocrLanguages = result.languages
+                    if (root.ocrLanguages.indexOf(root.ocrLanguage) < 0) root.ocrLanguage = root.ocrLanguages[0]
+                    root.saveStatus = ""
+                    ocrSettingsDialog.open()
+                } catch (error) {
+                    root.saveStatus = "Could not read the installed OCR languages"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview OCR languages:", text) }
+    }
+
+    Process {
+        id: imageOcrProcess
+        command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        property string sourcePathAtStart: ""
+        onStarted: {
+            imageOcrProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    if (result.error) {
+                        root.saveStatus = result.error
+                        return
+                    }
+                    root.ocrRecognizedText = String(result.text || "")
+                    root.ocrRecognizedFileName = root.nameFromPath(imageOcrProcess.sourcePathAtStart)
+                    root.saveStatus = root.ocrRecognizedText.length > 0
+                        ? "Recognized " + root.ocrRecognizedText.length + " characters from " + root.ocrRecognizedFileName
+                        : "No text found in " + root.ocrRecognizedFileName
+                    recognizedTextDialog.open()
+                } catch (error) {
+                    root.saveStatus = "Could not read the recognized text"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview image OCR:", text) }
+    }
+
+    Process {
+        id: pdfOcrProcess
+        command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        onStarted: {
+            pdfOcrProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.saveStatus = result.ok
+                        ? "Searchable PDF saved · " + result.pages + " pages · " + root.nameFromPath(result.path)
+                        : (result.error || "Could not make this PDF searchable")
+                } catch (error) {
+                    root.saveStatus = "Could not make this PDF searchable"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview searchable PDF:", text) }
+    }
+
+    Process {
+        id: copyOcrProcess
+        command: ["wl-copy", "--type", "text/plain;charset=utf-8"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        onStarted: {
+            copyOcrProcess.write(inputPayload)
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview OCR clipboard:", text) }
+    }
+
+    Process {
         id: exportProcess
         command: ["python3"]
         stdinEnabled: true
@@ -599,15 +1176,86 @@ ApplicationWindow {
             onStreamFinished: {
                 try {
                     const result = JSON.parse(text)
-                    root.saveStatus = result.ok
-                        ? "Exported " + root.nameFromPath(result.path) + (result.pages ? " · " + result.pages + " pages" : "")
-                        : (result.error || "Could not export this file")
+                    if (result.ok) {
+                        let status = "Exported " + root.nameFromPath(result.path)
+                        if (result.pages) status += " · " + result.pages + " pages"
+                        if (result.encrypted) status += " · password protected"
+                        if (result.input_size_bytes !== undefined && result.output_size_bytes !== undefined) {
+                            const difference = result.input_size_bytes - result.output_size_bytes
+                            if (difference > 0) status += " · reduced by " + root.formatBytes(difference)
+                            else if (difference < 0) status += " · output larger by " + root.formatBytes(-difference)
+                            else status += " · file size unchanged"
+                        }
+                        root.saveStatus = status
+                    } else {
+                        root.saveStatus = result.error || "Could not export this file"
+                    }
                 } catch (error) {
                     root.saveStatus = "Could not export this file"
                 }
             }
         }
         stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview export:", text) }
+    }
+
+    Process {
+        id: backgroundProcess
+        command: [root.backgroundRemovalPython]
+        stdinEnabled: true
+        property string inputPayload: ""
+        property string failureDetails: ""
+        onStarted: {
+            backgroundProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.saveStatus = result.ok
+                        ? "Removed background · " + root.nameFromPath(result.path)
+                        : (result.error || "Could not remove this image background")
+                } catch (error) {
+                    root.saveStatus = backgroundProcess.failureDetails.length > 0
+                        ? backgroundProcess.failureDetails.trim()
+                        : "Could not remove this image background. Check the optional CPU setup in Preview help."
+                }
+            }
+        }
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (text.length > 0) {
+                    backgroundProcess.failureDetails = text
+                    console.warn("Preview background removal:", text)
+                }
+            }
+        }
+    }
+
+    Process {
+        id: lassoExtractProcess
+        command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        onStarted: {
+            lassoExtractProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    root.saveStatus = result.ok
+                        ? "Extracted selection · " + root.nameFromPath(result.path) + " · " + result.width + " × " + result.height + " px"
+                        : (result.error || "Could not extract this selection")
+                } catch (error) {
+                    root.saveStatus = "Could not extract this selection"
+                }
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview freeform selection:", text) }
     }
 
     Process {
@@ -636,12 +1284,53 @@ ApplicationWindow {
     }
 
     Process {
+        id: pageInsertProcess
+        command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        property string sourcePathAtStart: ""
+        onStarted: {
+            pageInsertProcess.write(inputPayload + "\n")
+            inputPayload = ""
+            root.pageInsertOptionsPending = ({})
+            importPdfPasswordInput.clear()
+            outputPdfPasswordInput.clear()
+        }
+        onExited: {
+            inputPayload = ""
+            root.pageInsertOptionsPending = ({})
+        }
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const result = JSON.parse(text)
+                    if (result.ok) {
+                        root.saveStatus = result.blank_pages
+                            ? "Added a blank page · " + root.nameFromPath(result.path)
+                            : "Inserted " + result.imported_pages + " pages · " + root.nameFromPath(result.path)
+                        if (pageInsertProcess.sourcePathAtStart === root.sourcePath)
+                            root.openFile(result.path, root.pageInsertOutputPasswordPending)
+                    } else {
+                        root.saveStatus = result.error || "Could not insert PDF pages"
+                    }
+                } catch (error) {
+                    root.saveStatus = "Could not insert PDF pages"
+                }
+                root.pageInsertOutputPasswordPending = ""
+                root.pageImportSourcePath = ""
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview page insertion:", text) }
+    }
+
+    Process {
         id: signProcess
         command: ["python3"]
         stdinEnabled: true
         onStarted: {
             signProcess.write(JSON.stringify({
                 password: root.signingPasswordPending,
+                source_password: root.pdfPassword,
                 options: root.signingOptionsPending
             }) + "\n")
             root.signingPasswordPending = ""
@@ -656,7 +1345,9 @@ ApplicationWindow {
                 try {
                     const result = JSON.parse(text)
                     root.saveStatus = result.ok
-                        ? "Digitally signed copy saved · page " + result.page + " · " + root.nameFromPath(result.path)
+                        ? "Digitally signed copy saved · page " + result.page
+                            + (result.encrypted ? " · password protected" : "")
+                            + " · " + root.nameFromPath(result.path)
                         : (result.error || "Could not sign this PDF")
                 } catch (error) {
                     root.saveStatus = "Could not sign this PDF"
@@ -755,12 +1446,58 @@ ApplicationWindow {
 
                 ToolAction { text: "Open"; onClicked: fileDialog.open() }
                 ToolAction { text: "Pages"; visible: root.isPdf; active: Boolean(viewerLoader.item && viewerLoader.item.showThumbnails); onClicked: if (viewerLoader.item) viewerLoader.item.showThumbnails = !viewerLoader.item.showThumbnails }
+                ToolAction {
+                    id: layoutButton
+                    text: "Layout ▾"
+                    visible: root.isPdf
+                    enabled: Boolean(viewerLoader.item && viewerLoader.item.pageCount > 0)
+                    onClicked: layoutMenu.popup(layoutButton, Qt.point(0, layoutButton.height))
+                }
+                Menu {
+                    id: layoutMenu
+                    MenuItem {
+                        text: "Single Page"
+                        checkable: true
+                        checked: Boolean(viewerLoader.item && viewerLoader.item.readingLayout === "single")
+                        onTriggered: if (viewerLoader.item) viewerLoader.item.setReadingLayout("single")
+                    }
+                    MenuItem {
+                        text: root.isPdf && viewerLoader.item && viewerLoader.item.hasPageOperations()
+                            ? "Continuous Scroll (reset page operations first)" : "Continuous Scroll"
+                        checkable: true
+                        checked: Boolean(viewerLoader.item && viewerLoader.item.readingLayout === "continuous")
+                        enabled: Boolean(viewerLoader.item && (!root.isPdf || !viewerLoader.item.hasPageOperations() || viewerLoader.item.readingLayout === "continuous"))
+                        onTriggered: if (viewerLoader.item) viewerLoader.item.setReadingLayout("continuous")
+                    }
+                    MenuItem {
+                        text: root.isPdf && viewerLoader.item && viewerLoader.item.hasPageOperations()
+                            ? "Two Pages (reset page operations first)" : "Two Pages"
+                        checkable: true
+                        checked: Boolean(viewerLoader.item && viewerLoader.item.readingLayout === "two-page")
+                        enabled: Boolean(viewerLoader.item && (!root.isPdf || !viewerLoader.item.hasPageOperations() || viewerLoader.item.readingLayout === "two-page"))
+                        onTriggered: if (viewerLoader.item) viewerLoader.item.setReadingLayout("two-page")
+                    }
+                }
 
                 Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 26; color: Theme.Tokens.separator }
 
                 ToolAction { text: "Select"; active: root.activeTool === "select"; onClicked: root.activeTool = "select" }
                 ToolAction { text: "Pen"; active: root.activeTool === "pen"; onClicked: root.activeTool = "pen" }
                 ToolAction { text: "Highlight"; active: root.activeTool === "highlight"; onClicked: root.activeTool = "highlight" }
+                ToolAction {
+                    id: textAnnotationButton
+                    text: "Text ▾"
+                    visible: root.isPdf
+                    active: ["text_highlight", "underline", "strike", "note"].indexOf(root.activeTool) >= 0
+                    onClicked: textAnnotationMenu.popup(textAnnotationButton, Qt.point(0, textAnnotationButton.height))
+                }
+                Menu {
+                    id: textAnnotationMenu
+                    MenuItem { text: "Highlight selected text"; onTriggered: root.addTextAnnotationTool("text_highlight") }
+                    MenuItem { text: "Underline selected text"; onTriggered: root.addTextAnnotationTool("underline") }
+                    MenuItem { text: "Strike through selected text"; onTriggered: root.addTextAnnotationTool("strike") }
+                    MenuItem { text: "Add note to selected text"; onTriggered: root.addTextAnnotationTool("note") }
+                }
                 ToolAction { text: "Shape"; active: root.activeTool === "rectangle"; onClicked: root.activeTool = "rectangle" }
                 ToolAction { text: "Text"; active: root.activeTool === "text"; onClicked: root.activeTool = "text" }
                 ToolAction { text: "Crop"; visible: !root.isPdf; active: root.activeTool === "crop"; onClicked: root.activeTool = root.activeTool === "crop" ? "select" : "crop" }
@@ -778,6 +1515,24 @@ ApplicationWindow {
                 Menu {
                     id: documentToolsMenu
                     MenuItem { text: "Document info…"; onTriggered: root.openDocumentInfo() }
+                    MenuItem {
+                        text: "Recognize text…"
+                        visible: !root.isPdf && !root.sourcePath.toLowerCase().endsWith(".svg")
+                        enabled: !ocrLanguageProcess.running && !imageOcrProcess.running && !pdfOcrProcess.running
+                        onTriggered: root.beginOcr("image")
+                    }
+                    MenuItem {
+                        text: "Make searchable PDF copy…"
+                        visible: root.isPdf
+                        enabled: Boolean(viewerLoader.item && viewerLoader.item.pageCount > 0)
+                            && !ocrLanguageProcess.running && !imageOcrProcess.running && !pdfOcrProcess.running
+                        onTriggered: root.beginOcr("pdf")
+                    }
+                    MenuItem {
+                        text: "Unlock PDF…"
+                        visible: root.isPdf && root.pdfIsPasswordProtected
+                        onTriggered: root.requestPdfPassword("Enter the password to unlock this PDF.", true)
+                    }
                     MenuSeparator { }
                     MenuItem {
                         visible: !root.isPdf
@@ -788,6 +1543,33 @@ ApplicationWindow {
                         visible: !root.isPdf
                         text: viewerLoader.item && viewerLoader.item.flippedVertically ? "Unflip vertically" : "Flip vertically"
                         onTriggered: if (viewerLoader.item && viewerLoader.item.toggleVerticalFlip) viewerLoader.item.toggleVerticalFlip()
+                    }
+                    MenuItem {
+                        visible: !root.isPdf && !root.sourcePath.toLowerCase().endsWith(".svg")
+                        enabled: !backgroundProcess.running
+                        text: backgroundProcess.running ? "Removing background…" : "Remove background…"
+                        onTriggered: backgroundRemovalFileDialog.open()
+                    }
+                    MenuItem {
+                        visible: !root.isPdf && !root.sourcePath.toLowerCase().endsWith(".svg")
+                        checkable: true
+                        checked: root.activeTool === "lasso"
+                        text: "Lasso selection"
+                        onTriggered: root.activeTool = root.activeTool === "lasso" ? "select" : "lasso"
+                    }
+                    MenuItem {
+                        visible: !root.isPdf && !root.sourcePath.toLowerCase().endsWith(".svg")
+                        enabled: Boolean(viewerLoader.item && viewerLoader.item.hasLassoSelection && !lassoExtractProcess.running)
+                        text: lassoExtractProcess.running ? "Extracting selection…" : "Extract selected area…"
+                        onTriggered: lassoExtractFileDialog.open()
+                    }
+                    MenuItem {
+                        visible: !root.isPdf && Boolean(viewerLoader.item && viewerLoader.item.hasLassoSelection)
+                        onTriggered: {
+                            viewerLoader.item.clearLasso()
+                            if (root.activeTool === "lasso") root.activeTool = "select"
+                        }
+                        text: "Clear lasso selection"
                     }
                     MenuSeparator { visible: !root.isPdf }
                     MenuItem { text: "Fill PDF forms…"; enabled: root.isPdf; onTriggered: formsDialog.open() }
@@ -890,6 +1672,9 @@ ApplicationWindow {
                 MenuItem { text: "Move page earlier"; enabled: Boolean(viewerLoader.item && viewerLoader.item.currentPage > 0); onTriggered: viewerLoader.item.moveCurrentPage(-1) }
                 MenuItem { text: "Move page later"; enabled: Boolean(viewerLoader.item && viewerLoader.item.currentPage + 1 < viewerLoader.item.pageCount); onTriggered: viewerLoader.item.moveCurrentPage(1) }
                 MenuSeparator { }
+                MenuItem { text: "Insert blank page after current…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0 && !pageInsertProcess.running); onTriggered: root.beginInsertBlankPage() }
+                MenuItem { text: "Insert pages from another PDF…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0 && !pageInsertProcess.running); onTriggered: root.beginImportPages() }
+                MenuSeparator { }
                 MenuItem { text: "Exclude page from export"; enabled: Boolean(viewerLoader.item && viewerLoader.item.pageCount > 1); onTriggered: viewerLoader.item.excludeCurrentPage() }
                 MenuItem { text: "Reset page operations"; enabled: Boolean(viewerLoader.item); onTriggered: viewerLoader.item.resetPageOperations() }
             }
@@ -916,6 +1701,8 @@ ApplicationWindow {
                 onLoaded: {
                     if (item) {
                         item.source = root.sourceUrl
+                        if (root.isPdf && root.pdfPassword.length > 0 && item.setDocumentPassword)
+                            item.setDocumentPassword(root.pdfPassword)
                         if (item.activeTool !== undefined) item.activeTool = root.activeTool
                         if (item.markColor !== undefined) item.markColor = root.markColor
                         if (item.strokeScale !== undefined) item.strokeScale = root.strokeScale
@@ -985,7 +1772,9 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     text: root.sourcePath && viewerLoader.item
-                        ? viewerLoader.item.documentStatus + (root.activeTool === "signature" ? " · Draw signature" : root.activeTool === "signature_box" ? " · Drag to place certificate signature" : root.isPdf ? " · PDF" : root.activeTool === "crop" ? " · Drag to select crop" : " · Image")
+                        ? viewerLoader.item.documentStatus
+                            + (root.isPdf && viewerLoader.item.readingLayout === "continuous" ? " · Continuous scroll; markup appears in Single Page" : root.isPdf && viewerLoader.item.readingLayout === "two-page" ? " · Two-page spread" : "")
+                            + (root.activeTool === "signature" ? " · Draw signature" : root.activeTool === "signature_box" ? " · Drag to place certificate signature" : root.isPdf ? " · PDF" : root.activeTool === "crop" ? " · Drag to select crop" : root.activeTool === "lasso" ? " · Trace the area to extract" : " · Image")
                         : "PDF · PNG · JPEG · SVG · WebP"
                     color: Theme.Tokens.textSecondary
                     font.pixelSize: 10
@@ -1014,6 +1803,79 @@ ApplicationWindow {
             spacing: 10
             Text { text: "The text stays editable in the Preview markup sidecar."; color: Theme.Tokens.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             TextField { id: textInput; Layout.fillWidth: true; placeholderText: "Type a note"; onAccepted: textDialog.accept() }
+        }
+    }
+
+    Dialog {
+        id: textNoteDialog
+        title: "Note on selected text"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onOpened: textNoteInput.forceActiveFocus()
+        onAccepted: root.saveTextNote(textNoteInput.text)
+
+        contentItem: ColumnLayout {
+            implicitWidth: 420
+            spacing: 10
+            Text {
+                Layout.fillWidth: true
+                text: "Attached to: “" + root.pendingTextNote.quote + "”"
+                color: Theme.Tokens.textSecondary
+                wrapMode: Text.Wrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+            }
+            TextArea {
+                id: textNoteInput
+                Layout.fillWidth: true
+                Layout.preferredHeight: 112
+                placeholderText: "Write a note about this passage"
+                wrapMode: TextEdit.Wrap
+            }
+        }
+    }
+
+    Dialog {
+        id: pdfPasswordDialog
+        title: "Unlock PDF"
+        modal: true
+        standardButtons: Dialog.Cancel
+        onOpened: pdfPasswordInput.forceActiveFocus()
+        onRejected: root.cancelPdfPassword()
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 390
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: root.pdfPasswordMessage || "Enter the password to unlock this PDF."
+                color: Theme.Tokens.textSecondary
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+
+            TextField {
+                id: pdfPasswordInput
+                Layout.fillWidth: true
+                placeholderText: "PDF password"
+                echoMode: TextInput.Password
+                passwordCharacter: "●"
+                maximumLength: 4096
+                selectByMouse: true
+                onAccepted: root.submitPdfPassword()
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { text: "Unlock"; highlighted: true; onClicked: root.submitPdfPassword() }
+            }
         }
     }
 
@@ -1278,6 +2140,177 @@ ApplicationWindow {
     }
 
     Dialog {
+        id: ocrSettingsDialog
+        title: root.ocrIntent === "pdf" ? "Make PDF text searchable" : "Recognize image text"
+        modal: true
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        onAccepted: root.submitOcrSettings()
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 410
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: root.ocrIntent === "pdf"
+                    ? "Create a searchable copy using local OCR. Current page order, rotations, markup, and form values are applied. Digitally signed PDFs cannot be changed."
+                    : "Recognize text on this image using local OCR. The current frame, crop, rotation, and flips are used; the image stays unchanged."
+                color: Theme.Tokens.textSecondary
+                wrapMode: Text.WordWrap
+            }
+
+            Text { text: "OCR language"; color: Theme.Tokens.textPrimary; font.pixelSize: 12 }
+            ComboBox {
+                id: ocrLanguageInput
+                Layout.fillWidth: true
+                model: root.ocrLanguages
+                currentIndex: Math.max(0, root.ocrLanguages.indexOf(root.ocrLanguage))
+                onActivated: root.ocrLanguage = currentText
+            }
+        }
+    }
+
+    Dialog {
+        id: recognizedTextDialog
+        title: "Text from " + root.ocrRecognizedFileName
+        modal: true
+        width: Math.min(700, Math.max(460, root.width - 32))
+        height: Math.min(580, Math.max(300, root.height - 32))
+        standardButtons: Dialog.Close
+        onOpened: recognizedTextArea.forceActiveFocus()
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 660
+            implicitHeight: 520
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: root.ocrRecognizedText.length > 0
+                    ? "Select text below or copy the full result. Recognition runs locally on your device."
+                    : "No text was found in this image."
+                color: Theme.Tokens.textSecondary
+                wrapMode: Text.WordWrap
+            }
+
+            TextArea {
+                id: recognizedTextArea
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                text: root.ocrRecognizedText
+                placeholderText: "Recognized text appears here"
+                background: Rectangle {
+                    radius: 8
+                    color: Theme.Tokens.background
+                    border.color: Theme.Tokens.separator
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: copyOcrProcess.running ? "Copying…" : "Copy all"
+                    enabled: root.ocrRecognizedText.length > 0 && !copyOcrProcess.running
+                    onClicked: root.copyRecognizedText()
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: pageInsertionDialog
+        title: root.pageImportSourcePath ? "Insert pages from another PDF" : "Insert a blank page"
+        modal: true
+        standardButtons: Dialog.Cancel
+        onRejected: root.cancelPageInsertion()
+        background: Rectangle {
+            radius: Theme.Tokens.radiusMedium
+            color: Theme.Tokens.surface
+            border.color: Theme.Tokens.separator
+        }
+
+        contentItem: ColumnLayout {
+            implicitWidth: 440
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: "Preview creates a new copy, applying the current page order, rotations, markup, and form values. Your open PDF and the imported PDF stay unchanged. Markup becomes part of the new copy."
+                color: Theme.Tokens.textSecondary
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                visible: Boolean(root.pageImportSourcePath)
+                Layout.fillWidth: true
+                text: "Import from: " + root.nameFromPath(root.pageImportSourcePath)
+                color: Theme.Tokens.textPrimary
+                font.pixelSize: 12
+                elide: Text.ElideMiddle
+            }
+
+            TextField {
+                id: importPageRangeInput
+                visible: Boolean(root.pageImportSourcePath)
+                Layout.fillWidth: true
+                placeholderText: "Pages to insert, such as 1-3,5 (blank inserts all)"
+                selectByMouse: true
+            }
+
+            TextField {
+                id: importPdfPasswordInput
+                visible: Boolean(root.pageImportSourcePath)
+                Layout.fillWidth: true
+                placeholderText: "Imported PDF password, if needed"
+                echoMode: TextInput.Password
+                passwordCharacter: "●"
+                maximumLength: 4096
+                selectByMouse: true
+            }
+
+            TextField {
+                id: outputPdfPasswordInput
+                Layout.fillWidth: true
+                placeholderText: "Protect new copy with a password (required for protected input)"
+                echoMode: TextInput.Password
+                passwordCharacter: "●"
+                maximumLength: 127
+                selectByMouse: true
+            }
+
+            Text {
+                id: pageInsertionMessage
+                visible: false
+                Layout.fillWidth: true
+                color: Theme.Tokens.warning
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { text: "Choose output and insert…"; highlighted: true; onClicked: root.preparePageInsertion() }
+            }
+        }
+    }
+
+    Dialog {
         id: signingOptionsDialog
         title: "Sign PDF with certificate"
         modal: true
@@ -1405,6 +2438,7 @@ ApplicationWindow {
         title: root.isPdf ? "Export PDF" : "Export image"
         modal: true
         standardButtons: Dialog.Cancel
+        onRejected: root.clearExportPending()
 
         contentItem: ColumnLayout {
             implicitWidth: 420
@@ -1416,6 +2450,52 @@ ApplicationWindow {
                     ? "Save a new PDF with your markup drawn onto each page. Page order, excluded pages, and rotations are applied to the exported copy. Text and original page content stay searchable."
                     : "Save a new image with markup applied. The original stays untouched. The selected frame, crop, flips, rotation, and resizing are applied to the copy."
                 color: Theme.Tokens.textSecondary
+                wrapMode: Text.WordWrap
+            }
+
+            CheckBox {
+                id: reducePdfSizeInput
+                visible: root.isPdf
+                Layout.fillWidth: true
+                text: "Reduce file size using lossless compression"
+            }
+
+            CheckBox {
+                id: protectPdfInput
+                visible: root.isPdf
+                Layout.fillWidth: true
+                text: "Password protect the exported copy"
+            }
+
+            TextField {
+                id: exportPasswordInput
+                visible: root.isPdf && protectPdfInput.checked
+                Layout.fillWidth: true
+                placeholderText: "New PDF password (up to 127 UTF-8 bytes)"
+                echoMode: TextInput.Password
+                passwordCharacter: "●"
+                maximumLength: 127
+                selectByMouse: true
+            }
+
+            TextField {
+                id: exportPasswordConfirmInput
+                visible: root.isPdf && protectPdfInput.checked
+                Layout.fillWidth: true
+                placeholderText: "Confirm new PDF password"
+                echoMode: TextInput.Password
+                passwordCharacter: "●"
+                maximumLength: 127
+                selectByMouse: true
+                onAccepted: root.chooseExportDestination()
+            }
+
+            Text {
+                visible: root.exportDialogMessage.length > 0
+                Layout.fillWidth: true
+                text: root.exportDialogMessage
+                color: Theme.Tokens.warning
+                font.pixelSize: 11
                 wrapMode: Text.WordWrap
             }
 
@@ -1476,6 +2556,14 @@ ApplicationWindow {
             root.pendingTextPosition = { x: x, y: y }
             textInput.text = ""
             textDialog.open()
+        }
+        function onTextNoteRequested(quote, rects, pageIndex) {
+            root.pendingTextNote = { quote: quote, rects: rects, pageIndex: pageIndex }
+            textNoteInput.text = ""
+            textNoteDialog.open()
+        }
+        function onTextAnnotationFailed(message) {
+            root.saveStatus = message
         }
     }
 

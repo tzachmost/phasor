@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 
 Item {
     id: root
@@ -12,6 +13,9 @@ Item {
     signal markupChanged()
     signal textRequested(real x, real y)
     signal signatureBoxRequested(real x1, real y1, real x2, real y2)
+    signal textSelectionStarted(real x, real y)
+    signal textSelectionMoved(real x, real y)
+    signal textSelectionFinished()
 
     function normalized(value, extent) {
         return extent > 0 ? Math.max(0, Math.min(1, value / extent)) : 0
@@ -82,6 +86,26 @@ Item {
             } else {
                 context.strokeRect(left, top, rectWidth, rectHeight)
             }
+        } else if (["text_highlight", "underline", "strike", "note"].indexOf(mark.type) >= 0
+                   && Array.isArray(mark.rects)) {
+            context.lineWidth = Math.max(1, unit * 0.0018)
+            for (const rect of mark.rects) {
+                const left = rect[0] * width
+                const top = rect[1] * height
+                const right = rect[2] * width
+                const bottom = rect[3] * height
+                if (mark.type === "text_highlight") {
+                    context.globalAlpha = 0.3
+                    context.fillRect(left, top, right - left, bottom - top)
+                    context.globalAlpha = 1
+                } else {
+                    const lineY = mark.type === "strike" ? (top + bottom) / 2 : bottom
+                    context.beginPath()
+                    context.moveTo(left, lineY)
+                    context.lineTo(right, lineY)
+                    context.stroke()
+                }
+            }
         } else if (mark.type === "text" && mark.text) {
             context.font = Math.max(12, (mark.size || 0.038) * unit) + "px sans-serif"
             context.fillText(mark.text, mark.x * width, mark.y * height)
@@ -110,6 +134,10 @@ Item {
         onPressed: function(mouse) {
             const x = root.normalized(mouse.x, root.width)
             const y = root.normalized(mouse.y, root.height)
+            if (["text_highlight", "underline", "strike", "note"].indexOf(root.activeTool) >= 0) {
+                root.textSelectionStarted(x, y)
+                return
+            }
             if (root.activeTool === "text") {
                 root.textRequested(x, y)
                 return
@@ -137,9 +165,14 @@ Item {
         }
 
         onPositionChanged: function(mouse) {
-            if (!pressed || !root.activeAnnotation) return
+            if (!pressed) return
             const x = root.normalized(mouse.x, root.width)
             const y = root.normalized(mouse.y, root.height)
+            if (["text_highlight", "underline", "strike", "note"].indexOf(root.activeTool) >= 0) {
+                root.textSelectionMoved(x, y)
+                return
+            }
+            if (!root.activeAnnotation) return
             if (root.activeAnnotation.type === "stroke" || root.activeAnnotation.type === "signature") {
                 const points = root.activeAnnotation.points.slice()
                 if (points.length < 6000) points.push([x, y])
@@ -151,6 +184,10 @@ Item {
         }
 
         onReleased: {
+            if (["text_highlight", "underline", "strike", "note"].indexOf(root.activeTool) >= 0) {
+                root.textSelectionFinished()
+                return
+            }
             if (!root.activeAnnotation) return
             if (root.activeAnnotation.type === "signature_box") {
                 const mark = root.activeAnnotation
@@ -171,8 +208,52 @@ Item {
         }
 
         onCanceled: {
+            if (["text_highlight", "underline", "strike", "note"].indexOf(root.activeTool) >= 0) {
+                root.textSelectionFinished()
+                return
+            }
             root.activeAnnotation = null
             canvas.requestPaint()
+        }
+    }
+
+    Repeater {
+        model: root.annotations.filter(function(mark) {
+            return mark.type === "note" && Array.isArray(mark.rects) && mark.rects.length > 0
+        })
+
+        delegate: Rectangle {
+            required property var modelData
+            readonly property var anchorRect: modelData.rects[0]
+            readonly property real markerSize: 18
+            x: Math.max(0, Math.min(root.width - markerSize, anchorRect[2] * root.width - markerSize / 2))
+            y: Math.max(0, Math.min(root.height - markerSize, anchorRect[1] * root.height - markerSize / 2))
+            width: markerSize
+            height: markerSize
+            radius: 5
+            z: 10
+            color: "#f3c969"
+            border.width: 1
+            border.color: "#6b5315"
+
+            Text {
+                anchors.centerIn: parent
+                text: "i"
+                color: "#34290c"
+                font.pixelSize: 12
+                font.weight: Font.Bold
+            }
+
+            MouseArea {
+                id: noteMarker
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+            }
+            ToolTip.visible: noteMarker.containsMouse
+            ToolTip.text: modelData.note
+            ToolTip.delay: 300
+            Accessible.name: "Text note: " + modelData.note
         }
     }
 

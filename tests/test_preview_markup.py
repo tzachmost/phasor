@@ -49,6 +49,33 @@ class PreviewMarkupTests(unittest.TestCase):
 
         self.assertEqual(load_markup(str(self.document)), payload)
 
+    def test_text_anchored_annotations_round_trip_on_pdf_pages(self) -> None:
+        payload = {
+            "version": 1,
+            "kind": "pdf",
+            "pages": {
+                "0": [
+                    {"type": "text_highlight", "quote": "Review this line", "rects": [[0.1, 0.2, 0.8, 0.25]], "color": "#f3c969"},
+                    {"type": "underline", "quote": "Review this line", "rects": [[0.1, 0.2, 0.8, 0.25]], "color": "#8bd5ca"},
+                    {"type": "strike", "quote": "Review this line", "rects": [[0.1, 0.2, 0.8, 0.25]], "color": "#ed8796"},
+                    {"type": "note", "quote": "Review this line", "rects": [[0.1, 0.2, 0.8, 0.25]], "note": "Check this against the source.", "color": "#f3c969"},
+                ]
+            },
+        }
+
+        save_markup(str(self.document), json.dumps(payload))
+
+        self.assertEqual(load_markup(str(self.document)), payload)
+
+    def test_text_anchored_annotations_reject_empty_anchors_bad_rectangles_and_image_use(self) -> None:
+        base = {"version": 1, "kind": "pdf", "pages": {"0": []}}
+        with self.assertRaisesRegex(ValueError, "selected quote"):
+            validate_payload({**base, "pages": {"0": [{"type": "underline", "quote": " ", "rects": [[0.1, 0.2, 0.8, 0.25]]}]}})
+        with self.assertRaisesRegex(ValueError, "positive width and height"):
+            validate_payload({**base, "pages": {"0": [{"type": "strike", "quote": "Text", "rects": [[0.8, 0.2, 0.1, 0.25]]}]}})
+        with self.assertRaisesRegex(ValueError, "only for PDF"):
+            validate_payload({"version": 1, "kind": "image", "annotations": [{"type": "note", "quote": "Text", "rects": [[0.1, 0.2, 0.8, 0.25]], "note": "Review"}]})
+
     def test_pdf_page_operations_round_trip_through_sidecar(self) -> None:
         payload = {
             "version": 1,
