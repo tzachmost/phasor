@@ -4,6 +4,7 @@ import "../../shell/theme" as Theme
 Item {
     id: root
 
+    readonly property bool isPdfView: false
     property url source: ""
     property string activeTool: "select"
     property color markColor: "#8bd5ca"

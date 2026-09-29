@@ -62,12 +62,26 @@ class PreviewExportTests(unittest.TestCase):
             value="Initial note",
             fieldFlags="multiline",
         )
+        page_canvas.acroForm.textfield(
+            name="access_code",
+            tooltip="Access code",
+            x=190,
+            y=110,
+            width=95,
+            height=20,
+            value="existing secret",
+            fieldFlags="password",
+        )
         page_canvas.acroForm.checkbox(
             name="accept_terms", tooltip="Accept terms", x=40, y=100, size=14, checked=False
         )
         page_canvas.acroForm.choice(
             name="country", tooltip="Country", x=40, y=55, width=120, height=22,
             options=["Poland", "Canada"], value="Poland",
+        )
+        page_canvas.acroForm.choice(
+            name="editable_region", tooltip="Region", x=185, y=65, width=100, height=22,
+            options=["Poland", "Canada"], value="Poland", fieldFlags="combo edit",
         )
         page_canvas.acroForm.listbox(
             name="favorite_drinks",
@@ -383,8 +397,12 @@ class PreviewExportTests(unittest.TestCase):
         self.assertFalse(fields["full_name"]["multiline"])
         self.assertTrue(fields["issued_by"]["read_only"])
         self.assertTrue(fields["notes"]["multiline"])
+        self.assertTrue(fields["access_code"]["password"])
+        self.assertEqual(fields["access_code"]["value"], "")
         self.assertEqual(fields["accept_terms"]["type"], "checkbox")
         self.assertEqual(fields["country"]["type"], "choice")
+        self.assertFalse(fields["country"]["editable"])
+        self.assertTrue(fields["editable_region"]["editable"])
         self.assertEqual(fields["favorite_drinks"]["type"], "multi_choice")
         self.assertEqual(fields["favorite_drinks"]["value"], ["Tea"])
         self.assertEqual(fields["full_name"]["pages"], [1])
@@ -401,8 +419,10 @@ class PreviewExportTests(unittest.TestCase):
                         "full_name": "Ada Lovelace",
                         "accept_terms": "/Yes",
                         "country": "Canada",
+                        "editable_region": "Iceland",
                         "favorite_drinks": ["Coffee", "Water"],
                         "notes": "First line\nSecond line",
+                        "access_code": "new secret",
                     },
                 }
             },
@@ -412,8 +432,10 @@ class PreviewExportTests(unittest.TestCase):
         self.assertEqual(values["full_name"]["/V"], "Ada Lovelace")
         self.assertEqual(str(values["accept_terms"]["/V"]), "/Yes")
         self.assertEqual(values["country"]["/V"], "Canada")
+        self.assertEqual(values["editable_region"]["/V"], "Iceland")
         self.assertEqual(values["favorite_drinks"]["/V"], ["Coffee", "Water"])
         self.assertEqual(values["notes"]["/V"], "First line\nSecond line")
+        self.assertEqual(values["access_code"]["/V"], "new secret")
         output_page = PdfReader(output).pages[0]
         widgets = {
             str(reference.get_object().get("/T")): reference.get_object()
@@ -444,6 +466,51 @@ class PreviewExportTests(unittest.TestCase):
             )
 
         self.assertFalse(output.exists())
+
+    def test_pdf_export_rejects_custom_values_for_fixed_choice_fields(self):
+        source = self.make_form_pdf()
+        output = self.root / "invalid-fixed-choice.pdf"
+
+        with self.assertRaisesRegex(ValueError, "Iceland is not a valid choice for country"):
+            export_pdf(
+                str(source),
+                str(output),
+                {
+                    "markup": {
+                        "version": 1,
+                        "kind": "pdf",
+                        "pages": {},
+                        "form_values": {"country": "Iceland"},
+                    }
+                },
+            )
+
+        self.assertFalse(output.exists())
+
+    def test_pdf_export_cli_reads_field_values_from_stdin(self):
+        from apps.preview import document_ops
+
+        source = self.make_form_pdf()
+        output = self.root / "stdin-form.pdf"
+        secret = "stdin secret"
+        command = ["document_ops.py", "pdf", str(source), str(output), "-"]
+        options = {
+            "markup": {
+                "version": 1,
+                "kind": "pdf",
+                "pages": {},
+                "form_values": {"access_code": secret},
+            }
+        }
+        result_json = io.StringIO()
+        with patch("apps.preview.document_ops.sys.stdin", io.StringIO(json.dumps(options) + "\n")):
+            with redirect_stdout(result_json):
+                exit_code = document_ops.main(command)
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(json.loads(result_json.getvalue())["ok"])
+        self.assertNotIn(secret, command)
+        self.assertEqual(PdfReader(output).get_fields()["access_code"]["/V"], secret)
 
     def test_pdf_signature_markup_exports_as_vector_strokes(self):
         source = self.root / "signature.pdf"

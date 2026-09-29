@@ -6,6 +6,7 @@ import "../../shell/theme" as Theme
 Item {
     id: root
 
+    readonly property bool isPdfView: true
     property url source: ""
     property string activeTool: "select"
     property color markColor: "#8bd5ca"
@@ -15,6 +16,7 @@ Item {
     property bool showThumbnails: true
     property var pageAnnotations: ({})
     property var formValues: ({})
+    property var passwordFieldNames: []
     property var pageOrder: []
     property var savedPageOrder: null
     property var pageRotations: ({})
@@ -69,16 +71,35 @@ Item {
         markupChanged()
     }
 
-    function serializeMarkup() {
+    function setPasswordFieldNames(names) {
+        passwordFieldNames = Array.isArray(names) ? names.slice() : []
+        const next = Object.assign({}, formValues)
+        let removed = false
+        for (const name of passwordFieldNames) {
+            if (Object.prototype.hasOwnProperty.call(next, name)) {
+                delete next[name]
+                removed = true
+            }
+        }
+        if (!removed) return
+        formValues = next
+        markupChanged()
+    }
+
+    function serializeMarkup(includePasswordValues) {
         const next = Object.assign({}, pageAnnotations)
-        next[String(sourcePage)] = markupLayer.annotations
+        if (sourcePage >= 0) next[String(sourcePage)] = markupLayer.annotations
+        const savedFormValues = Object.assign({}, formValues)
+        if (!includePasswordValues) {
+            for (const name of passwordFieldNames) delete savedFormValues[name]
+        }
         return {
             version: 1,
             kind: "pdf",
             pages: next,
-            page_order: pageOrder,
+            page_order: pageOrder.length > 0 ? pageOrder : savedPageOrder,
             page_rotations: pageRotations,
-            form_values: formValues
+            form_values: savedFormValues
         }
     }
 
@@ -188,6 +209,7 @@ Item {
         onSourceChanged: {
             root.pageAnnotations = ({})
             root.formValues = ({})
+            root.passwordFieldNames = []
             root.pageOrder = []
             root.savedPageOrder = null
             root.pageRotations = ({})

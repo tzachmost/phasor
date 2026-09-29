@@ -488,7 +488,8 @@ def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
             else:
                 kind = "unsupported"
 
-            raw_value = field.get("/V", "")
+            is_password = field_type == "/Tx" and bool(flags & (1 << 13))
+            raw_value = "" if is_password else field.get("/V", "")
             if isinstance(raw_value, (list, tuple)):
                 value: str | list[str] = [str(item) for item in raw_value]
             elif kind == "multi_choice" and raw_value:
@@ -503,6 +504,8 @@ def inspect_pdf_forms(source_value: str) -> dict[str, Any]:
                 "required": bool(flags & (1 << 1)),
                 "read_only": bool(flags & 1),
                 "multiline": field_type == "/Tx" and bool(flags & (1 << 12)),
+                "password": is_password,
+                "editable": kind == "choice" and bool(flags & (1 << 17) and flags & (1 << 18)),
                 "options": options,
                 "pages": sorted(pages_by_field.get(name, set())),
             })
@@ -526,6 +529,9 @@ def _validated_pdf_form_values(reader: Any, values: dict[str, Any]) -> dict[str,
         field = fields[name]
         field_type = str(field.get("/FT", ""))
         flags = int(field.get("/Ff", 0))
+        editable_combo = field_type == "/Ch" and bool(
+            flags & (1 << 17) and flags & (1 << 18) and not flags & (1 << 21)
+        )
         if flags & 1:
             raise ValueError(f"The field {name} is read-only")
         if field_type == "/Btn":
@@ -551,7 +557,7 @@ def _validated_pdf_form_values(reader: Any, values: dict[str, Any]) -> dict[str,
                     raise ValueError(f"The value for {name} contains an unknown choice")
             elif not isinstance(value, str):
                 raise ValueError(f"The value for {name} must be a choice")
-            elif allowed and value not in allowed:
+            elif allowed and not editable_combo and value not in allowed:
                 raise ValueError(f"{value} is not a valid choice for {name}")
             normalized[name] = value
         else:
@@ -1069,6 +1075,21 @@ def print_document(source_value: str, options: dict[str, Any]) -> dict[str, Any]
         return {"ok": True, "job": result.stdout.strip(), "printer": printer, "copies": copies}
 
 
+def _read_json_line_from_stdin(label: str) -> Any:
+    maximum_length = 5 * 1024 * 1024
+    value = sys.stdin.readline(maximum_length + 1)
+    if not value.endswith("\n") or len(value) > maximum_length:
+        raise ValueError(f"{label} is missing or too large")
+    return json.loads(value)
+
+
+def _json_object_argument(value: str, label: str) -> dict[str, Any]:
+    payload = _read_json_line_from_stdin(label) if value == "-" else json.loads(value)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be an object")
+    return payload
+
+
 def main(argv: list[str]) -> int:
     try:
         if len(argv) == 2 and argv[1] == "printers":
@@ -1076,28 +1097,19 @@ def main(argv: list[str]) -> int:
         elif len(argv) == 3 and argv[1] == "forms":
             result = inspect_pdf_forms(argv[2])
         elif len(argv) == 4 and argv[1] == "print":
-            options = json.loads(argv[3])
-            if not isinstance(options, dict):
-                raise ValueError("Print options must be an object")
+            options = _json_object_argument(argv[3], "Print options")
             result = print_document(argv[2], options)
         elif len(argv) == 5 and argv[1] == "merge":
             sources = json.loads(argv[3])
-            options = json.loads(argv[4])
+            options = _json_object_argument(argv[4], "Merge options")
             if not isinstance(sources, list) or any(not isinstance(path, str) for path in sources):
                 raise ValueError("Merge input paths must be a list of strings")
-            if not isinstance(options, dict):
-                raise ValueError("Merge options must be an object")
             result = merge_pdfs(sources, argv[2], options)
         elif len(argv) == 5 and argv[1] in {"image", "pdf"}:
-            options = json.loads(argv[4])
-            if not isinstance(options, dict):
-                raise ValueError("Export options must be an object")
+            options = _json_object_argument(argv[4], "Export options")
             result = export_image(argv[2], argv[3], options) if argv[1] == "image" else export_pdf(argv[2], argv[3], options)
         elif len(argv) == 5 and argv[1] == "sign":
-            signing_input = sys.stdin.readline(5 * 1024 * 1024 + 1)
-            if not signing_input.endswith("\n") or len(signing_input) > 5 * 1024 * 1024:
-                raise ValueError("The signing input is missing or too large")
-            payload = json.loads(signing_input)
+            payload = _read_json_line_from_stdin("The signing input")
             if (
                 not isinstance(payload, dict)
                 or not isinstance(payload.get("password"), str)
@@ -1109,7 +1121,7 @@ def main(argv: list[str]) -> int:
                 raise ValueError("The certificate password is too long")
             result = sign_pdf(argv[2], argv[3], argv[4], payload["options"], password)
         else:
-            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON | merge OUTPUT SOURCES_JSON OPTIONS_JSON | image|pdf SOURCE OUTPUT OPTIONS_JSON | sign SOURCE OUTPUT CERTIFICATE (signing JSON on stdin)")
+            raise ValueError("Usage: document_ops.py printers | forms PDF | print DOCUMENT OPTIONS_JSON|- | merge OUTPUT SOURCES_JSON OPTIONS_JSON|- | image|pdf SOURCE OUTPUT OPTIONS_JSON|- | sign SOURCE OUTPUT CERTIFICATE (JSON on stdin)")
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("ok", True) else 1
     except (OSError, ValueError, json.JSONDecodeError) as error:

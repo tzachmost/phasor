@@ -33,6 +33,10 @@ ApplicationWindow {
     property string formsLoadPath: ""
     property var formFields: []
     property string formsStatus: ""
+    property bool formsReady: false
+    property bool markupReady: true
+    property bool deferredMarkupSave: false
+    property string pendingFileToOpen: ""
     property var printerNames: []
     property string defaultPrinter: ""
     property string printerStatus: ""
@@ -66,6 +70,17 @@ ApplicationWindow {
     function openFile(value) {
         const incoming = String(value || "")
         if (incoming.length === 0) return
+        const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(incoming)
+        const nextSourceUrl = isUrl ? incoming : urlFromPath(incoming)
+        const nextSourcePath = pathFromUrl(nextSourceUrl)
+        if (sourcePath && (!markupReady || (root.isPdf && !formsReady))) {
+            pendingFileToOpen = nextSourcePath
+            return
+        }
+        if (sourcePath && (autosaveTimer.running || deferredMarkupSave)) {
+            autosaveTimer.stop()
+            saveMarkup()
+        }
         signingOptionsDialog.close()
         signingCertificateDialog.close()
         signingOutputDialog.close()
@@ -73,25 +88,46 @@ ApplicationWindow {
         signingPasswordPending = ""
         signingOptionsPending = ({})
         signingPageIndex = -1
-        const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(incoming)
-        sourceUrl = isUrl ? incoming : urlFromPath(incoming)
-        sourcePath = pathFromUrl(sourceUrl)
+        sourcePath = nextSourcePath
+        sourceUrl = nextSourceUrl
         fileName = nameFromPath(sourcePath)
         searchText = ""
         saveStatus = ""
         loadedMarkup = ({})
         formFields = []
         formsStatus = isPdf ? "Loading form fields…" : ""
+        formsReady = !isPdf
+        markupReady = false
+        deferredMarkupSave = false
+        pendingFileToOpen = ""
         activeTool = "select"
         autosaveTimer.stop()
         if (viewerLoader.item && viewerLoader.item.resetDocument) viewerLoader.item.resetDocument()
         if (viewerLoader.item && viewerLoader.item.loadMarkup) viewerLoader.item.loadMarkup(loadedMarkup)
+        applyFormFieldMetadata()
         markupLoadPath = sourcePath
         loadProcess.exec(["python3", helperPath, "load", sourcePath])
         if (isPdf) {
             formsLoadPath = sourcePath
             formsProcess.exec(["python3", documentOpsPath, "forms", sourcePath])
         }
+    }
+
+    function continueAfterDocumentReady() {
+        if (!markupReady || (root.isPdf && !formsReady)) return
+
+        const pending = pendingFileToOpen
+        pendingFileToOpen = ""
+        if (pending.length > 0 && pending !== sourcePath) {
+            if (autosaveTimer.running || deferredMarkupSave) {
+                autosaveTimer.stop()
+                saveMarkup()
+            }
+            Qt.callLater(function() { root.openFile(pending) })
+            return
+        }
+
+        if (deferredMarkupSave) autosaveTimer.restart()
     }
 
     function zoomBy(factor) {
@@ -108,7 +144,12 @@ ApplicationWindow {
 
     function saveMarkup() {
         if (!sourcePath || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
-        if (root.isPdf && viewerLoader.item.sourcePage < 0) return
+        if (!markupReady || (root.isPdf && !formsReady)) {
+            deferredMarkupSave = true
+            return
+        }
+        deferredMarkupSave = false
+        saveProcess.sourcePathAtStart = sourcePath
         saveProcess.exec([
             "python3",
             helperPath,
@@ -134,7 +175,7 @@ ApplicationWindow {
         let output = pathFromUrl(value)
         const suffix = root.isPdf ? "pdf" : root.exportFormat.toLowerCase() === "jpeg" ? "jpg" : root.exportFormat.toLowerCase()
         if (!/\.[^/]+$/.test(output)) output += "." + suffix
-        const options = { markup: viewerLoader.item.serializeMarkup() }
+        const options = { markup: viewerLoader.item.serializeMarkup(true) }
         if (!root.isPdf) {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
@@ -143,13 +184,14 @@ ApplicationWindow {
             options.preserve_aspect = root.preserveAspect
             options.quality = imageQualityInput.value
         }
+        exportProcess.inputPayload = JSON.stringify(options)
         exportProcess.exec([
             "python3",
             root.documentOpsPath,
             root.isPdf ? "pdf" : "image",
             root.sourcePath,
             output,
-            JSON.stringify(options)
+            "-"
         ])
         saveStatus = "Exporting a copy…"
     }
@@ -161,6 +203,14 @@ ApplicationWindow {
 
     function setFormValue(field, value) {
         if (viewerLoader.item && viewerLoader.item.setFormValue) viewerLoader.item.setFormValue(field.name, value)
+    }
+
+    function applyFormFieldMetadata() {
+        if (!viewerLoader.item || !viewerLoader.item.setPasswordFieldNames) return
+        const names = root.formFields
+            .filter(function(field) { return field.password })
+            .map(function(field) { return field.name })
+        viewerLoader.item.setPasswordFieldNames(names)
     }
 
     function beginMerge() {
@@ -192,7 +242,7 @@ ApplicationWindow {
         let output = root.pathFromUrl(value)
         if (!/\.pdf$/i.test(output)) output += ".pdf"
         const options = {
-            markup: viewerLoader.item.serializeMarkup(),
+            markup: viewerLoader.item.serializeMarkup(true),
             page_index: root.signingPageIndex,
             box: root.signingBox,
             rotation: root.signingRotation,
@@ -236,14 +286,15 @@ ApplicationWindow {
         if (!root.isPdf || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
         let output = root.pathFromUrl(value)
         if (!/\.pdf$/i.test(output)) output += ".pdf"
-        const options = { markup: viewerLoader.item.serializeMarkup() }
+        const options = { markup: viewerLoader.item.serializeMarkup(true) }
+        mergeProcess.inputPayload = JSON.stringify(options)
         mergeProcess.exec([
             "python3",
             root.documentOpsPath,
             "merge",
             output,
             JSON.stringify(root.mergeInputPaths),
-            JSON.stringify(options)
+            "-"
         ])
         saveStatus = "Merging " + root.mergeInputPaths.length + " PDFs…"
     }
@@ -258,7 +309,7 @@ ApplicationWindow {
     function submitPrint() {
         if (!sourcePath || !viewerLoader.item || !viewerLoader.item.serializeMarkup) return
         const options = {
-            markup: viewerLoader.item.serializeMarkup(),
+            markup: viewerLoader.item.serializeMarkup(true),
             printer: printerInput.currentIndex > 0 ? printerInput.currentText : "",
             copies: copyInput.value,
             pages: pageRangeInput.text.trim()
@@ -267,7 +318,8 @@ ApplicationWindow {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
         }
-        printProcess.exec(["python3", documentOpsPath, "print", sourcePath, JSON.stringify(options)])
+        printProcess.inputPayload = JSON.stringify(options)
+        printProcess.exec(["python3", documentOpsPath, "print", sourcePath, "-"])
         printDialog.close()
         saveStatus = "Preparing print job…"
     }
@@ -362,7 +414,10 @@ ApplicationWindow {
     }
 
     onSourceUrlChanged: {
-        if (viewerLoader.item) viewerLoader.item.source = sourceUrl
+        if (viewerLoader.item && viewerLoader.item.source !== undefined
+            && Boolean(viewerLoader.item.isPdfView) === root.isPdf) {
+            viewerLoader.item.source = sourceUrl
+        }
     }
     onActiveToolChanged: {
         if (viewerLoader.item && viewerLoader.item.activeTool !== undefined) viewerLoader.item.activeTool = activeTool
@@ -396,10 +451,13 @@ ApplicationWindow {
                     if (root.loadedMarkup.error) root.saveStatus = root.loadedMarkup.error
                     else root.saveStatus = root.hasMarkup(root.loadedMarkup) ? "Markup loaded" : ""
                     if (viewerLoader.item && viewerLoader.item.loadMarkup) viewerLoader.item.loadMarkup(root.loadedMarkup)
+                    root.applyFormFieldMetadata()
                 } catch (error) {
                     root.loadedMarkup = ({})
                     root.saveStatus = "Could not read saved markup"
                 }
+                root.markupReady = true
+                root.continueAfterDocumentReady()
             }
         }
         stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview markup load:", text) }
@@ -416,10 +474,14 @@ ApplicationWindow {
                     root.formFields = result.fields || []
                     root.formsStatus = result.error
                         || (root.formFields.length > 0 ? root.formFields.length + " fields found" : "This PDF has no editable form fields.")
+                    root.formsReady = true
+                    root.applyFormFieldMetadata()
                 } catch (error) {
                     root.formFields = []
                     root.formsStatus = "Could not read PDF form fields"
+                    root.formsReady = true
                 }
+                root.continueAfterDocumentReady()
             }
         }
         stderr: StdioCollector { onStreamFinished: if (text.length > 0) console.warn("Preview forms:", text) }
@@ -428,8 +490,10 @@ ApplicationWindow {
     Process {
         id: saveProcess
         command: ["python3"]
+        property string sourcePathAtStart: ""
         stdout: StdioCollector {
             onStreamFinished: {
+                if (saveProcess.sourcePathAtStart !== root.sourcePath) return
                 try {
                     const result = JSON.parse(text)
                     root.saveStatus = result.ok ? "Markup saved beside the document" : (result.error || "Could not save markup")
@@ -444,6 +508,13 @@ ApplicationWindow {
     Process {
         id: exportProcess
         command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        onStarted: {
+            exportProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -462,6 +533,13 @@ ApplicationWindow {
     Process {
         id: mergeProcess
         command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        onStarted: {
+            mergeProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -531,6 +609,13 @@ ApplicationWindow {
     Process {
         id: printProcess
         command: ["python3"]
+        stdinEnabled: true
+        property string inputPayload: ""
+        onStarted: {
+            printProcess.write(inputPayload + "\n")
+            inputPayload = ""
+        }
+        onExited: inputPayload = ""
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -736,6 +821,7 @@ ApplicationWindow {
                         if (item.strokeScale !== undefined) item.strokeScale = root.strokeScale
                         if (root.isPdf && item.searchText !== undefined) item.searchText = root.searchText
                         if (item.loadMarkup) item.loadMarkup(root.loadedMarkup)
+                        root.applyFormFieldMetadata()
                     }
                 }
                 onStatusChanged: {
@@ -893,16 +979,19 @@ ApplicationWindow {
                         }
 
                         TextField {
-                            visible: formFieldRow.field.type === "text" && !formFieldRow.field.multiline
+                            visible: formFieldRow.field.type === "text"
+                                && (!formFieldRow.field.multiline || formFieldRow.field.password)
                             Layout.fillWidth: true
                             placeholderText: formFieldRow.field.name
                             text: String(root.formValue(formFieldRow.field) || "")
                             readOnly: formFieldRow.field.read_only
+                            echoMode: formFieldRow.field.password ? TextInput.Password : TextInput.Normal
                             onEditingFinished: root.setFormValue(formFieldRow.field, text)
                         }
 
                         ScrollView {
-                            visible: formFieldRow.field.type === "text" && formFieldRow.field.multiline
+                            visible: formFieldRow.field.type === "text"
+                                && formFieldRow.field.multiline && !formFieldRow.field.password
                             Layout.fillWidth: true
                             Layout.preferredHeight: 104
                             clip: true
@@ -922,6 +1011,16 @@ ApplicationWindow {
                             model: formFieldRow.field.options || []
                             textRole: "label"
                             enabled: !formFieldRow.field.read_only
+                            editable: formFieldRow.field.editable
+                            editText: {
+                                if (!formFieldRow.field.editable) return ""
+                                const selected = root.formValue(formFieldRow.field)
+                                const values = formFieldRow.field.options || []
+                                for (let index = 0; index < values.length; index++) {
+                                    if (values[index].value === selected) return values[index].label
+                                }
+                                return String(selected || "")
+                            }
                             currentIndex: {
                                 const selected = root.formValue(formFieldRow.field)
                                 const values = formFieldRow.field.options || []
@@ -933,6 +1032,19 @@ ApplicationWindow {
                             onActivated: function(index) {
                                 const values = formFieldRow.field.options || []
                                 if (index >= 0 && index < values.length) root.setFormValue(formFieldRow.field, values[index].value)
+                            }
+                            onEditTextChanged: {
+                                if (editable && activeFocus) root.setFormValue(formFieldRow.field, editText)
+                            }
+                            onAccepted: {
+                                const values = formFieldRow.field.options || []
+                                for (let index = 0; index < values.length; index++) {
+                                    if (values[index].label === editText) {
+                                        root.setFormValue(formFieldRow.field, values[index].value)
+                                        return
+                                    }
+                                }
+                                root.setFormValue(formFieldRow.field, editText)
                             }
                         }
 
