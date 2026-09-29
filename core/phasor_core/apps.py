@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,60 @@ def application_dirs() -> list[Path]:
 
 def _truth(value: str | None) -> bool:
     return (value or "").strip().lower() == "true"
+
+
+@lru_cache(maxsize=1)
+def _icon_index() -> dict[str, str]:
+    """Index installed icon files as a fallback for incomplete icon themes."""
+    data_dirs = [Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")).expanduser()]
+    data_dirs.extend(Path(path).expanduser() for path in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":"))
+    icons: dict[str, str] = {}
+    for data_dir in data_dirs:
+        for root in (data_dir / "icons", data_dir / "pixmaps"):
+            if not root.is_dir():
+                continue
+            for directory, _subdirs, files in os.walk(root):
+                for filename in files:
+                    if filename.endswith((".svg", ".svgz", ".png", ".xpm")):
+                        path = Path(directory) / filename
+                        if path.is_file():
+                            icons.setdefault(path.stem, str(path))
+    return icons
+
+
+def resolve_icon(icon: str) -> str:
+    """Resolve desktop icon names to installed files when possible."""
+    icon = icon.strip()
+    if not icon:
+        return ""
+    candidate = Path(icon).expanduser()
+    if candidate.is_absolute() and candidate.is_file():
+        return str(candidate)
+    name = candidate.name
+    if name.endswith((".svgz", ".svg", ".png", ".xpm")):
+        name = name.rsplit(".", 1)[0]
+    data_dirs = [Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")).expanduser()]
+    data_dirs.extend(Path(path).expanduser() for path in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":"))
+    themes = ("hicolor", "Adwaita", "AdwaitaLegacy", "breeze", "breeze-dark")
+    locations = (
+        "scalable/apps", "symbolic/apps", "apps/scalable", "apps/48",
+        "16x16/apps", "22x22/apps", "24x24/apps", "32x32/apps",
+        "48x48/apps", "64x64/apps", "96x96/apps", "128x128/apps",
+        "48x48/legacy", "48x48/legacy/apps",
+    )
+    extensions = (".svg", ".svgz", ".png", ".xpm")
+    for data_dir in data_dirs:
+        for theme in themes:
+            for location in locations:
+                for extension in extensions:
+                    path = data_dir / "icons" / theme / location / (name + extension)
+                    if path.is_file():
+                        return str(path)
+        for extension in extensions:
+            path = data_dir / "pixmaps" / (name + extension)
+            if path.is_file():
+                return str(path)
+    return _icon_index().get(name, "")
 
 
 class AppsService:
@@ -61,7 +116,7 @@ class AppsService:
                     "name": name,
                     "genericName": item.get("GenericName", ""),
                     "comment": item.get("Comment", ""),
-                    "icon": item.get("Icon", ""),
+                    "icon": resolve_icon(item.get("Icon", "")),
                     "desktopFile": str(path),
                     "exec": command,
                     "terminal": _truth(item.get("Terminal")),
@@ -71,7 +126,7 @@ class AppsService:
             "name": "Settings",
             "genericName": "Desktop Settings",
             "comment": "Personalize appearance, workspaces, and window layout",
-            "icon": "preferences-system",
+            "icon": resolve_icon("preferences-system"),
             "desktopFile": "phasor-settings.desktop",
             "exec": "phasorctl settings toggle",
             "terminal": False,

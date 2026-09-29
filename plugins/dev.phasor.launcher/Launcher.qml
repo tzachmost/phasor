@@ -106,6 +106,11 @@ Item {
         }
     }
 
+    function iconSource(icon) {
+        if (!icon) return ""
+        return String(icon).startsWith("/") ? "file://" + icon : Quickshell.iconPath(icon)
+    }
+
     function activate(index) {
         if (index < 0 || index >= results.length) return
         const item = results[index]
@@ -329,7 +334,7 @@ Item {
                                     width: 26
                                     height: 26
                                     implicitSize: 26
-                                    source: modelData.kind === "app" && modelData.icon ? Quickshell.iconPath(modelData.icon) : ""
+                                    source: modelData.kind === "app" ? launcher.iconSource(modelData.icon) : ""
                                     visible: status === Image.Ready
                                 }
                                 Text { anchors.centerIn: parent; visible: !resultIcon.visible; text: modelData.kind === "app" ? (modelData.name.length ? modelData.name.charAt(0).toUpperCase() : "A") : "↗"; color: Theme.Tokens.accent; font.pixelSize: 16; font.bold: true }
@@ -384,7 +389,7 @@ Item {
                                     width: 32
                                     height: 32
                                     implicitSize: 32
-                                    source: modelData.icon ? Quickshell.iconPath(modelData.icon) : ""
+                                    source: launcher.iconSource(modelData.icon)
                                     visible: status === Image.Ready
                                 }
                                 Text {

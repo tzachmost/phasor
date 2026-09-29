@@ -57,6 +57,11 @@ Item {
         })
     }
 
+    function iconSource(icon) {
+        if (!icon) return ""
+        return String(icon).startsWith("/") ? "file://" + icon : Quickshell.iconPath(icon)
+    }
+
     function refreshSettings() {
         if (!phasor) return
         phasor.request("settings.get", {}, function(result) {
@@ -159,7 +164,7 @@ Item {
                                 width: 30
                                 height: 30
                                 implicitSize: 30
-                                source: windowTile.modelData.icon ? Quickshell.iconPath(windowTile.modelData.icon) : ""
+                                source: dock.iconSource(windowTile.modelData.icon)
                                 visible: status === Image.Ready
                             }
 
