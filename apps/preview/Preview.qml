@@ -236,6 +236,8 @@ ApplicationWindow {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
             options.frame_index = viewerLoader.item.currentPage || 0
+            options.flip_horizontal = viewerLoader.item.flippedHorizontally
+            options.flip_vertical = viewerLoader.item.flippedVertically
             options.width = imageWidthInput.text
             options.height = imageHeightInput.text
             options.preserve_aspect = root.preserveAspect
@@ -375,6 +377,8 @@ ApplicationWindow {
             options.crop = viewerLoader.item.cropRect || null
             options.rotation = viewerLoader.item.rotation || 0
             options.frame_index = viewerLoader.item.currentPage || 0
+            options.flip_horizontal = viewerLoader.item.flippedHorizontally
+            options.flip_vertical = viewerLoader.item.flippedVertically
         }
         printProcess.inputPayload = JSON.stringify(options)
         printProcess.exec(["python3", documentOpsPath, "print", sourcePath, "-"])
@@ -775,6 +779,17 @@ ApplicationWindow {
                     id: documentToolsMenu
                     MenuItem { text: "Document info…"; onTriggered: root.openDocumentInfo() }
                     MenuSeparator { }
+                    MenuItem {
+                        visible: !root.isPdf
+                        text: viewerLoader.item && viewerLoader.item.flippedHorizontally ? "Unflip horizontally" : "Flip horizontally"
+                        onTriggered: if (viewerLoader.item && viewerLoader.item.toggleHorizontalFlip) viewerLoader.item.toggleHorizontalFlip()
+                    }
+                    MenuItem {
+                        visible: !root.isPdf
+                        text: viewerLoader.item && viewerLoader.item.flippedVertically ? "Unflip vertically" : "Flip vertically"
+                        onTriggered: if (viewerLoader.item && viewerLoader.item.toggleVerticalFlip) viewerLoader.item.toggleVerticalFlip()
+                    }
+                    MenuSeparator { visible: !root.isPdf }
                     MenuItem { text: "Fill PDF forms…"; enabled: root.isPdf; onTriggered: formsDialog.open() }
                     MenuItem { text: root.activeTool === "signature" ? "Stop signing" : "Draw signature"; checkable: true; checked: root.activeTool === "signature"; onTriggered: root.activeTool = root.activeTool === "signature" ? "select" : "signature" }
                     MenuItem { text: "Sign with certificate…"; enabled: Boolean(root.isPdf && viewerLoader.item && viewerLoader.item.pageCount > 0 && !signProcess.running); onTriggered: root.beginCertificateSigning() }
@@ -1399,7 +1414,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 text: root.isPdf
                     ? "Save a new PDF with your markup drawn onto each page. Page order, excluded pages, and rotations are applied to the exported copy. Text and original page content stay searchable."
-                    : "Save a new image with markup applied. The original stays untouched. A crop selection is applied before rotation and resizing."
+                    : "Save a new image with markup applied. The original stays untouched. The selected frame, crop, flips, rotation, and resizing are applied to the copy."
                 color: Theme.Tokens.textSecondary
                 wrapMode: Text.WordWrap
             }

@@ -280,6 +280,50 @@ class PreviewExportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "original stays unchanged"):
             export_image(str(source), str(source), {"markup": {"version": 1, "kind": "image"}})
 
+    def test_image_export_flips_the_selected_pixels(self):
+        source = self.root / "quadrants.png"
+        image = Image.new("RGB", (2, 2))
+        image.putdata([(255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 255, 0)])
+        image.save(source)
+
+        horizontal = self.root / "horizontal.png"
+        export_image(
+            str(source), str(horizontal),
+            {"flip_horizontal": True, "markup": {"version": 1, "kind": "image", "annotations": []}},
+        )
+        with Image.open(horizontal) as flipped:
+            self.assertEqual(flipped.convert("RGB").getpixel((0, 0)), (0, 0, 255))
+            self.assertEqual(flipped.convert("RGB").getpixel((0, 1)), (255, 255, 0))
+
+        vertical = self.root / "vertical.png"
+        export_image(
+            str(source), str(vertical),
+            {"flip_vertical": True, "markup": {"version": 1, "kind": "image", "annotations": []}},
+        )
+        with Image.open(vertical) as flipped:
+            self.assertEqual(flipped.convert("RGB").getpixel((0, 0)), (0, 255, 0))
+            self.assertEqual(flipped.convert("RGB").getpixel((0, 1)), (255, 0, 0))
+
+        rotated = self.root / "rotated-and-flipped.png"
+        export_image(
+            str(source), str(rotated),
+            {"rotation": 90, "flip_horizontal": True,
+             "markup": {"version": 1, "kind": "image", "annotations": []}},
+        )
+        with Image.open(rotated) as flipped:
+            self.assertEqual(flipped.convert("RGB").getpixel((0, 0)), (255, 0, 0))
+            self.assertEqual(flipped.convert("RGB").getpixel((1, 0)), (0, 255, 0))
+
+    def test_image_export_rejects_non_boolean_flip_options(self):
+        source = self.make_image()
+        output = self.root / "invalid-flip.png"
+        with self.assertRaisesRegex(ValueError, "flip options must be boolean"):
+            export_image(
+                str(source), str(output),
+                {"flip_horizontal": "yes", "markup": {"version": 1, "kind": "image", "annotations": []}},
+            )
+        self.assertFalse(output.exists())
+
     def test_animated_image_export_writes_the_selected_frame(self):
         source = self.make_animated_image()
         output = self.root / "second-frame.png"
@@ -978,11 +1022,13 @@ class PreviewExportTests(unittest.TestCase):
                 with patch("apps.preview.document_ops.export_image", wraps=export_image) as image_export:
                     result = print_document(
                         str(source),
-                        {"frame_index": 1, "markup": {"version": 1, "kind": "image", "annotations": []}},
+                        {"frame_index": 1, "flip_horizontal": True,
+                         "markup": {"version": 1, "kind": "image", "annotations": []}},
                     )
 
         self.assertTrue(result["ok"])
         self.assertEqual(image_export.call_args.args[2]["frame_index"], 1)
+        self.assertTrue(image_export.call_args.args[2]["flip_horizontal"])
 
     def test_print_preserves_cropped_rotated_pdf_content_in_prepared_copy(self):
         from pypdf import PdfWriter

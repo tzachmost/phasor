@@ -61,6 +61,7 @@ The first Preview milestone is complete. Continue toward a broader document and 
 - [ ] Add text-anchored highlighting, underline, strike-through, and note annotations.
 - [x] Add a document information panel for PDF metadata and image dimensions, format, and available image metadata.
 - [ ] Add PDF password entry/protection and file-size reduction with explicit copy-based export.
-- [ ] Add image flipping and background removal.
+- [x] Flip images horizontally or vertically.
+- [ ] Add background removal.
 - [x] Browse animated image frames and export or print a selected frame.
 - [ ] Exercise Preview with complex public forms, outlines, signed files, large scans, and real printer queues.

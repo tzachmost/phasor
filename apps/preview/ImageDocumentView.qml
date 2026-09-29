@@ -12,6 +12,8 @@ Item {
     property real userZoom: 1
     property real rotation: 0
     property bool framePlaybackPaused: false
+    property bool flippedHorizontally: false
+    property bool flippedVertically: false
     property var cropRect: null
     readonly property bool sideways: Math.abs(rotation % 180) > 45 && Math.abs(rotation % 180) < 135
     readonly property real fitScale: {
@@ -57,6 +59,14 @@ Item {
         if (hasAnimation) framePlaybackPaused = !framePlaybackPaused
     }
 
+    function toggleHorizontalFlip() {
+        flippedHorizontally = !flippedHorizontally
+    }
+
+    function toggleVerticalFlip() {
+        flippedVertically = !flippedVertically
+    }
+
     function clearCrop() {
         cropRect = null
     }
@@ -66,6 +76,8 @@ Item {
         rotation = 0
         userZoom = 1
         framePlaybackPaused = false
+        flippedHorizontally = false
+        flippedVertically = false
         Qt.callLater(function() { viewport.returnToBounds() })
     }
 
@@ -114,7 +126,15 @@ Item {
                 width: status === Image.Ready ? implicitWidth * root.effectiveZoom : 1
                 height: status === Image.Ready ? implicitHeight * root.effectiveZoom : 1
                 anchors.centerIn: parent
-                rotation: root.rotation
+                transform: [
+                    Rotation { origin.x: image.width / 2; origin.y: image.height / 2; angle: root.rotation },
+                    Scale {
+                        origin.x: image.width / 2
+                        origin.y: image.height / 2
+                        xScale: root.flippedHorizontally ? -1 : 1
+                        yScale: root.flippedVertically ? -1 : 1
+                    }
+                ]
             }
 
             MarkupCanvas {
@@ -123,7 +143,15 @@ Item {
                 height: image.height
                 anchors.centerIn: image
                 z: 10
-                rotation: root.rotation
+                transform: [
+                    Rotation { origin.x: markupLayer.width / 2; origin.y: markupLayer.height / 2; angle: root.rotation },
+                    Scale {
+                        origin.x: markupLayer.width / 2
+                        origin.y: markupLayer.height / 2
+                        xScale: root.flippedHorizontally ? -1 : 1
+                        yScale: root.flippedVertically ? -1 : 1
+                    }
+                ]
                 activeTool: root.activeTool === "crop" ? "select" : root.activeTool
                 inkColor: root.markColor
                 strokeScale: root.strokeScale
@@ -136,7 +164,15 @@ Item {
                 width: image.width
                 height: image.height
                 anchors.centerIn: image
-                rotation: root.rotation
+                transform: [
+                    Rotation { origin.x: cropLayer.width / 2; origin.y: cropLayer.height / 2; angle: root.rotation },
+                    Scale {
+                        origin.x: cropLayer.width / 2
+                        origin.y: cropLayer.height / 2
+                        xScale: root.flippedHorizontally ? -1 : 1
+                        yScale: root.flippedVertically ? -1 : 1
+                    }
+                ]
                 z: 20
 
                 Rectangle {

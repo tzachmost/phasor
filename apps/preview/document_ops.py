@@ -238,6 +238,15 @@ def export_image(source_value: str, output_value: str, options: dict[str, Any]) 
     if rotation:
         image = image.rotate(-rotation, expand=True)
 
+    flip_horizontal = options.get("flip_horizontal", False)
+    flip_vertical = options.get("flip_vertical", False)
+    if not isinstance(flip_horizontal, bool) or not isinstance(flip_vertical, bool):
+        raise ValueError("Image flip options must be boolean")
+    if flip_horizontal:
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if flip_vertical:
+        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+
     target_width = _size_option(options.get("width"), "Width")
     target_height = _size_option(options.get("height"), "Height")
     if target_width or target_height:
@@ -1126,6 +1135,8 @@ def print_document(source_value: str, options: dict[str, Any]) -> dict[str, Any]
                     "crop": options.get("crop"),
                     "rotation": options.get("rotation", 0),
                     "frame_index": options.get("frame_index", 0),
+                    "flip_horizontal": options.get("flip_horizontal", False),
+                    "flip_vertical": options.get("flip_vertical", False),
                     "quality": 100,
                 },
             )
